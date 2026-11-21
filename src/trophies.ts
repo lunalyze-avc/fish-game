@@ -12,12 +12,12 @@ export const TROPHIES: TrophyDef[] = [
   { id: "cod_almighty", name: "Cod Almighty", hint: "Land Big Gerald" },
   { id: "oh_my_cod", name: "Oh My Cod", hint: "Catch on all 3 maps" },
   { id: "reely_ridiculous", name: "Reely Ridiculous", hint: "Catch in Disco Pond" },
-  { id: "fish_outta_luck", name: "Fish Outta Luck", hint: "Miss 3 bites in a row" },
+  { id: "fish_outta_luck", name: "Fish Outta Luck", hint: "Miss 3 bites" },
   { id: "what_a_catch", name: "What a Catch", hint: "25 catches" },
   { id: "catch_me_if_you_can", name: "Catch Me If You Can", hint: "Catch the duck" },
   { id: "fish_and_giggles", name: "Fish and Giggles", hint: "3 catches in a row" },
   { id: "reverse_psychology", name: "Reverse Psychology", hint: "Catch in Reverse" },
-  { id: "reel_champ", name: "Reel Champ", hint: "Score 40 in Tournament" },
+  { id: "reel_champ", name: "Reel Champ", hint: "Score 40 in Tourney" },
 ];
 
 const SHELF_Y = [46, 86, 126];
@@ -42,7 +42,7 @@ function cup(ctx: CanvasRenderingContext2D, x: number, y: number, lit: boolean):
 }
 
 function label(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, color: string): void {
-  ctx.font = "5px monospace";
+  ctx.font = "9px VT323, monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = color;
@@ -65,8 +65,8 @@ export function drawRoom(ctx: CanvasRenderingContext2D, owned: Set<string>, t: n
 
   // Neon-ish sign
   ctx.fillStyle = "#1a1a24";
-  ctx.fillRect(96, 4, 128, 14);
-  ctx.font = "7px monospace";
+  ctx.fillRect(85, 4, 150, 14);
+  ctx.font = '8px "Press Start 2P", monospace';
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = `hsl(${40 + Math.sin(t * 2) * 10}, 100%, 60%)`;
@@ -81,7 +81,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, owned: Set<string>, t: n
     const got = owned.has(tr.id);
     cup(ctx, sx + 22, sy - 16, got);
     const name = got ? tr.name : "???";
-    label(ctx, name.length > 16 ? name.slice(0, 15) + "." : name, sx + 36, sy + 8, got ? "#ffe9a8" : "#8a8a96");
+    label(ctx, name.length > 22 ? name.slice(0, 21) + "." : name, sx + 36, sy + 8, got ? "#ffe9a8" : "#8a8a96");
     if (!got) label(ctx, tr.hint, sx + 36, sy + 14, "#6d6d78");
   });
 
@@ -101,7 +101,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, owned: Set<string>, t: n
   ctx.fillRect(14, 150, 292, 1);
 
   const count = TROPHIES.filter((tr) => owned.has(tr.id)).length;
-  ctx.font = "8px monospace";
+  ctx.font = '8px "Press Start 2P", monospace';
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "#ffd23f";

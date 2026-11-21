@@ -11,28 +11,58 @@ export interface Species {
   value: number; // points for a catch
   hat?: "sun" | "boat" | "monocle" | "cape" | "horns";
   beak?: boolean;
+  cell?: [number, number]; // [column, row] on the PixelFishes atlas (32px cells)
   quips: string[];
 }
 
 export const SPECIES: Record<string, Species> = {
-  bubbles: { name: "Bubbles McGee", body: "#ffb347", belly: "#ffd38a", tail: "#ff8c1a", w: 14, h: 9, strength: 0.6, value: 1, hat: "sun", quips: ["Wheee!", "Ooh, a ride!"] },
-  splashington: { name: "Captain Splashington", body: "#7fd1ff", belly: "#d6f2ff", tail: "#3aa0e0", w: 16, h: 12, strength: 0.9, value: 2, hat: "boat", quips: ["Rescue mission!", "Ahoy!"] },
-  doug: { name: "Doug", body: "#c8b89a", belly: "#e5dcc8", tail: "#a89878", w: 16, h: 10, strength: 0.7, value: 2, quips: ["Meh.", "I'm not excited."] },
-  nugget: { name: "Nugget", body: "#e8a33c", belly: "#f6cf86", tail: "#c97f22", w: 12, h: 10, strength: 0.5, value: 1, quips: ["Is that bait? Nom.", "I'm hungry."] },
-  flops: { name: "Sir Flops-a-Lot", body: "#6d5b8c", belly: "#b9a8d6", tail: "#4a3d63", w: 18, h: 10, strength: 1.0, value: 3, hat: "monocle", quips: ["Your bobber is tacky.", "Hook, line and stinker."] },
-  gary: { name: "Gary the Gaslighting Guppy", body: "#9ee89a", belly: "#d6ffd3", tail: "#6cc56a", w: 9, h: 7, strength: 0.4, value: 1, quips: ["I was never hooked.", "You imagined that."] },
-  steve: { name: "Stinkbait Steve", body: "#8c9b3a", belly: "#c7d46a", tail: "#6b7a22", w: 20, h: 6, strength: 1.3, value: 3, quips: ["Ya got me!", "Grr!"] },
-  dee: { name: "Dee the Drain Dweller", body: "#e0d6e8", belly: "#f6f0ff", tail: "#bfb3cc", w: 12, h: 8, strength: 0.8, value: 2, quips: ["The pond is haunted.", "Who turned on the light?"] },
-  marv: { name: "Mudskipper Marv", body: "#8a6a3f", belly: "#c09a64", tail: "#5e4426", w: 13, h: 9, strength: 0.9, value: 2, quips: ["My legs!", "Walking is overrated."] },
-  gloopy: { name: "Gloopy", body: "#6ed36a", belly: "#a6f5a0", tail: "#49a24a", w: 14, h: 12, strength: 0.5, value: 1, quips: ["Sorry, sorry, sorry.", "Oops, my bad."] },
-  bogfin: { name: "Count Bogfin", body: "#4b3f5c", belly: "#7b6a92", tail: "#2e2538", w: 16, h: 10, strength: 1.1, value: 3, hat: "cape", quips: ["I VANQUISH YOU!", "BLOOD. OF. CAPITALS."] },
-  tina: { name: "Tadpole Tina", body: "#2f3d2f", belly: "#5b7a5b", tail: "#1f2a1f", w: 8, h: 6, strength: 0.3, value: 1, quips: ["One day I'll be a frog.", "Not yet..."] },
-  zorp: { name: "Zorp the Three-Eyed Sardine", body: "#b58cff", belly: "#e2d2ff", tail: "#8a5cd6", w: 14, h: 6, strength: 0.7, value: 3, quips: ["Directions home?", "Take me to the mothership!"] },
-  glarb: { name: "Glarb", body: "#55e0a0", belly: "#b7ffd9", tail: "#2fb57a", w: 12, h: 10, strength: 0.9, value: 2, hat: "horns", quips: ["La la laaa!", "*wobbly singing*"] },
+  bubbles: { name: "Bubbles McGee", cell: [1, 0], body: "#ffb347", belly: "#ffd38a", tail: "#ff8c1a", w: 14, h: 9, strength: 0.6, value: 1, hat: "sun", quips: ["Wheee!", "Ooh, a ride!"] },
+  splashington: { name: "Captain Splashington", cell: [8, 1], body: "#7fd1ff", belly: "#d6f2ff", tail: "#3aa0e0", w: 16, h: 12, strength: 0.9, value: 2, hat: "boat", quips: ["Rescue mission!", "Ahoy!"] },
+  doug: { name: "Doug", cell: [0, 1], body: "#c8b89a", belly: "#e5dcc8", tail: "#a89878", w: 16, h: 10, strength: 0.7, value: 2, quips: ["Meh.", "I'm not excited."] },
+  nugget: { name: "Nugget", cell: [0, 3], body: "#e8a33c", belly: "#f6cf86", tail: "#c97f22", w: 12, h: 10, strength: 0.5, value: 1, quips: ["Is that bait? Nom.", "I'm hungry."] },
+  flops: { name: "Sir Flops-a-Lot", cell: [3, 1], body: "#6d5b8c", belly: "#b9a8d6", tail: "#4a3d63", w: 18, h: 10, strength: 1.0, value: 3, hat: "monocle", quips: ["Your bobber is tacky.", "Hook, line and stinker."] },
+  gary: { name: "Gary the Gaslighting Guppy", cell: [2, 3], body: "#9ee89a", belly: "#d6ffd3", tail: "#6cc56a", w: 9, h: 7, strength: 0.4, value: 1, quips: ["I was never hooked.", "You imagined that."] },
+  steve: { name: "Stinkbait Steve", cell: [4, 2], body: "#8c9b3a", belly: "#c7d46a", tail: "#6b7a22", w: 20, h: 6, strength: 1.3, value: 3, quips: ["Ya got me!", "Grr!"] },
+  dee: { name: "Dee the Drain Dweller", cell: [5, 2], body: "#e0d6e8", belly: "#f6f0ff", tail: "#bfb3cc", w: 12, h: 8, strength: 0.8, value: 2, quips: ["The pond is haunted.", "Who turned on the light?"] },
+  marv: { name: "Mudskipper Marv", cell: [5, 5], body: "#8a6a3f", belly: "#c09a64", tail: "#5e4426", w: 13, h: 9, strength: 0.9, value: 2, quips: ["My legs!", "Walking is overrated."] },
+  gloopy: { name: "Gloopy", cell: [5, 6], body: "#6ed36a", belly: "#a6f5a0", tail: "#49a24a", w: 14, h: 12, strength: 0.5, value: 1, quips: ["Sorry, sorry, sorry.", "Oops, my bad."] },
+  bogfin: { name: "Count Bogfin", cell: [6, 4], body: "#4b3f5c", belly: "#7b6a92", tail: "#2e2538", w: 16, h: 10, strength: 1.1, value: 3, hat: "cape", quips: ["I VANQUISH YOU!", "BLOOD. OF. CAPITALS."] },
+  tina: { name: "Tadpole Tina", cell: [1, 5], body: "#2f3d2f", belly: "#5b7a5b", tail: "#1f2a1f", w: 8, h: 6, strength: 0.3, value: 1, quips: ["One day I'll be a frog.", "Not yet..."] },
+  zorp: { name: "Zorp the Three-Eyed Sardine", cell: [3, 7], body: "#b58cff", belly: "#e2d2ff", tail: "#8a5cd6", w: 14, h: 6, strength: 0.7, value: 3, quips: ["Directions home?", "Take me to the mothership!"] },
+  glarb: { name: "Glarb", cell: [8, 5], body: "#55e0a0", belly: "#b7ffd9", tail: "#2fb57a", w: 12, h: 10, strength: 0.9, value: 2, hat: "horns", quips: ["La la laaa!", "*wobbly singing*"] },
   duck: { name: "The Imposter", body: "#ffe04a", belly: "#fff3a0", tail: "#ffe04a", w: 12, h: 9, strength: 0.6, value: 5, beak: true, quips: ["Squeak!"] },
-  gerald: { name: "Big Gerald", body: "#5a7d8c", belly: "#b7d0da", tail: "#3c5b68", w: 60, h: 34, strength: 1.8, value: 10, quips: ["...", "Rrrumble."] },
+  gerald: { name: "Big Gerald", cell: [8, 6], body: "#5a7d8c", belly: "#b7d0da", tail: "#3c5b68", w: 60, h: 34, strength: 1.8, value: 10, quips: ["...", "Rrrumble."] },
   boot: { name: "Boot", body: "#7a4a22", belly: "#a06a34", tail: "#5a3516", w: 12, h: 10, strength: 0.3, value: 1, quips: ["Stomp!"] },
 };
+
+let atlas: HTMLImageElement | null = null;
+
+// Load the CC0 PixelFishes sheet. Until it arrives, fish fall back to the code-drawn sprites.
+export function loadAtlas(url: string): void {
+  const img = new Image();
+  img.onload = () => {
+    atlas = img;
+  };
+  img.src = url;
+}
+
+function drawAtlasFish(
+  ctx: CanvasRenderingContext2D,
+  sp: Species,
+  cx: number,
+  cy: number,
+  facing: number,
+  t: number,
+): void {
+  const [col, row] = sp.cell!;
+  const size = Math.round(sp.w * 1.6);
+  ctx.save();
+  ctx.translate(Math.round(cx), Math.round(cy));
+  ctx.rotate(Math.sin(t * 6) * 0.06); // gentle wiggle
+  ctx.scale(facing, 1);
+  ctx.drawImage(atlas!, col * 32, row * 32, 32, 32, -size / 2, -size / 2, size, size);
+  ctx.restore();
+}
 
 export function paintFish(
   ctx: CanvasRenderingContext2D,
@@ -46,6 +76,10 @@ export function paintFish(
 ): void {
   if (asBoot) {
     paintBoot(ctx, cx, cy);
+    return;
+  }
+  if (atlas && sp.cell) {
+    drawAtlasFish(ctx, sp, cx, cy, facing, t);
     return;
   }
   const rx = sp.w / 2;

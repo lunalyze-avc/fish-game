@@ -1,5 +1,5 @@
 // Reel Goobers: game loop, input, fish AI, random events, trophies and screens.
-import { SPECIES, paintFish, type Species } from "./sprites";
+import { SPECIES, paintFish, loadAtlas, type Species } from "./sprites";
 import { sfx, startMusic, stopMusic, unlockAudio } from "./audio";
 import { TROPHIES, drawRoom } from "./trophies";
 
@@ -8,6 +8,9 @@ const H = 180;
 const POND = { x0: 8, x1: 312, y0: 36, y1: 168 };
 const ROD = { x: 160, y: 20 };
 const SAVE_KEY = "reelgoobers.v1";
+// The 320x180 game is drawn at 6x into a 1920x1080 canvas, so pixels stay chunky and text stays legible.
+const SCALE = 6;
+const FONT = '"Press Start 2P", monospace';
 
 type MapId = "kiddie" | "sewer" | "swamp";
 type Scene = "title" | "play" | "over" | "room";
@@ -90,6 +93,12 @@ let quip = { text: "", t: 0 };
 let banner = { text: "", t: 0 };
 let toast = { text: "", t: 0 };
 let floaters: { text: string; x: number; y: number; t: number }[] = [];
+interface Particle { x: number; y: number; vx: number; vy: number; t: number; c: string; }
+let particles: Particle[] = [];
+let shakeT = 0;
+let shakeX = 0;
+let shakeY = 0;
+const ZONE = 0.22; // width of the green zone on the reel bar
 let deco: { x: number; y: number; r: number }[] = [];
 let mx = W / 2;
 let my = H / 2;
@@ -134,6 +143,14 @@ const bob = {
   fish: null as Fish | null,
   tension: 0,
   strain: 0,
+  marker: 0.5,
+  markerV: 0,
+  zoneC: 0.5,
+  zoneRetarget: 0,
+  progress: 0,
+  inZone: false,
+  perfect: false,
+  start: { x: 0, y: 0 },
 };
 
 function spawn(key: string): Fish {
@@ -237,6 +254,10 @@ function resetBob(): void {
   bob.ty = ROD.y;
   bob.tension = 0;
   bob.strain = 0;
+  bob.progress = 0;
+  bob.marker = 0.5;
+  bob.markerV = 0;
+  bob.inZone = false;
 }
 
 function cast(): void {
@@ -256,7 +277,7 @@ function cast(): void {
 
 function bite(f: Fish): void {
   bob.state = "bite";
-  bob.biteT = 1.1;
+  bob.biteT = 1.0;
   bob.fish = f;
   f.hooked = true;
   sfx("bite");
@@ -265,12 +286,25 @@ function bite(f: Fish): void {
 function hookFish(): void {
   const f = bob.fish;
   if (!f) return;
+  // The ring shrinks while the fish bites; the closer to the ring's edge you click, the better
+  const radius = 3 + 11 * (bob.biteT / 1.0);
+  bob.perfect = radius < 4.5;
   bob.state = "fight";
-  bob.tension = 0.25;
+  bob.marker = 0.5;
+  bob.markerV = 0;
+  bob.progress = bob.perfect ? 0.12 : 0.04;
   bob.strain = 0;
-  f.bubble = "Hey!";
+  bob.zoneC = 0.5;
+  bob.zoneRetarget = 0;
+  bob.inZone = false;
+  bob.start = { x: f.x, y: f.y };
+  f.hooked = true;
+  f.bubble = bob.perfect ? "PERFECT!" : "Hey!";
   f.bubbleT = 1.2;
-  sfx("hook");
+  burst(bob.x, bob.y, "#ffd23f", 14);
+  shakeT = 0.18;
+  sfx(bob.perfect ? "event" : "hook");
+  if (bob.perfect) floaters.push({ text: "PERFECT!", x: bob.x, y: bob.y - 22, t: 1 });
 }
 
 function catchFish(f: Fish): void {
@@ -284,6 +318,12 @@ function catchFish(f: Fish): void {
   save.catches++;
   if (!save.maps.includes(mapId)) save.maps.push(mapId);
   quip = { text: pick(SPECIES[f.key].quips), t: 2 };
+  burst(f.x, f.y, SPECIES[key].body, 26);
+  shakeT = f.big ? 0.5 : 0.22;
+  if (bob.perfect) {
+    score += 2;
+    floaters.push({ text: "PERFECT +2", x: f.x, y: f.y - 24, t: 1.4 });
+  }
   floaters.push({ text: `+${pts}`, x: f.x, y: f.y - 14, t: 1.2 });
   sfx(f.key === "duck" ? "squeak" : "catch");
   if (f.key === "duck") unlock("catch_me_if_you_can");
@@ -306,30 +346,62 @@ function fightStep(dt: number): void {
     return;
   }
   const sp = SPECIES[f.key];
-  const wave = 0.55 + 0.45 * Math.sin(clock * 2.6 + f.phase);
-  const pull = sp.strength * wave;
-  bob.tension = clamp(bob.tension + dt * (pull * 0.5 + (held ? 0.6 : -0.8)), 0, 1.3);
-  bob.strain = bob.tension >= 1 ? bob.strain + dt : Math.max(0, bob.strain - dt);
+  const weight = sp.strength;
 
-  const dx = bob.x - f.x;
-  const dy = bob.y - f.y;
-  const d = Math.hypot(dx, dy) || 1;
-  const reel = held && bob.tension < 0.95 ? 22 / (f.big ? 1.6 : 1) : 0;
-  const away = sp.strength * 4 * wave;
-  const step = (reel - away) * dt;
-  f.x = clamp(f.x + (dx / d) * step, POND.x0, POND.x1);
-  f.y = clamp(f.y + (dy / d) * step, POND.y0, POND.y1);
+  // The green zone drifts to a new spot now and then. Strong fish move it faster.
+  bob.zoneRetarget -= dt;
+  if (bob.zoneRetarget <= 0) {
+    bob.zoneC = rnd(0.2, 0.8);
+    bob.zoneRetarget = rnd(0.9, 1.6) / (0.6 + weight * 0.5);
+  }
 
-  if (bob.strain > 1.1) {
+  // Holding lifts the marker, releasing lets it fall. The fish kicks it around.
+  bob.markerV += (held ? 3.2 : -2.4) * dt;
+  bob.markerV *= 1 - 2.2 * dt;
+  const kick = Math.sin(clock * (2 + weight) + f.phase) * 0.35 * weight * dt;
+  bob.marker = clamp(bob.marker + bob.markerV * dt + kick, 0, 1);
+  if (bob.marker <= 0 || bob.marker >= 1) bob.markerV = 0;
+
+  const inZone = Math.abs(bob.marker - bob.zoneC) < ZONE / 2;
+  if (inZone && !bob.inZone) {
+    sfx("click");
+    if (f.bubbleT <= 0) {
+      f.bubble = "Ooh!";
+      f.bubbleT = 0.8;
+    }
+  }
+  bob.inZone = inZone;
+
+  if (inZone) {
+    bob.progress += dt * 0.24;
+    bob.strain = Math.max(0, bob.strain - dt * 0.7);
+  } else {
+    bob.progress -= dt * 0.05;
+    bob.strain += dt * (0.45 + 0.25 * weight);
+  }
+  bob.progress = clamp(bob.progress, 0, 1);
+
+  // The fish is reeled in as progress grows, and tugs harder when the line is strained
+  const p = bob.progress;
+  f.x = clamp(lerp(bob.start.x, bob.x, p) + Math.sin(clock * 18) * bob.strain * 2.5, POND.x0, POND.x1);
+  f.y = clamp(lerp(bob.start.y, bob.y, p) + Math.cos(clock * 15) * bob.strain * 1.5, POND.y0, POND.y1);
+  if (bob.strain > 0.7 && f.bubbleT <= 0) {
+    f.bubble = pick(["Let me GO!", "Nooo!", "Ahhh!"]);
+    f.bubbleT = 0.9;
+  }
+
+  if (bob.strain >= 1) {
+    f.hooked = false;
     f.bubble = "Ha! Bye!";
     f.bubbleT = 1.6;
     sfx("escape");
+    shakeT = 0.3;
     unlock("reel_trouble");
     bob.streak = 0;
     resetBob();
     return;
   }
-  if (d < 7) catchFish(f);
+  if (bob.progress >= 1) catchFish(f);
 }
 
 function updateBob(dt: number): void {
@@ -350,6 +422,7 @@ function updateBob(dt: number): void {
         bob.x = bob.tx;
         bob.y = bob.ty;
         sfx("splash");
+        burst(bob.x, bob.y, "#ffffff", 8);
       }
       break;
     }
@@ -360,7 +433,7 @@ function updateBob(dt: number): void {
       bob.y = bob.ty + Math.sin(bob.t * 3) * 0.8;
       for (const f of fishes) {
         if (f.dead || f.hooked || !f.mouthOpen) continue;
-        if (Math.hypot(f.x - bob.x, (f.y - bob.y) * 1.6) < 14 && Math.random() < 1.1 * dt) {
+        if (Math.hypot(f.x - bob.x, (f.y - bob.y) * 1.6) < 14 && Math.random() < 1.3 * dt) {
           bite(f);
           break;
         }
@@ -525,6 +598,7 @@ function update(dt: number): void {
     f.y -= 12 * dt;
   }
   floaters = floaters.filter((f) => f.t > 0);
+  updateParticles(dt);
   if (scene !== "play") return;
 
   if (mode === "tourney") {
@@ -551,7 +625,7 @@ function update(dt: number): void {
 
 // ---------- Drawing ----------
 function txt(s: string, x: number, y: number, color = "#fff", size = 8, align: CanvasTextAlign = "left"): void {
-  ctx.font = `${size}px monospace`;
+  ctx.font = `${size}px ${FONT}`;
   ctx.textAlign = align;
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(0,0,0,0.6)";
@@ -561,22 +635,156 @@ function txt(s: string, x: number, y: number, color = "#fff", size = 8, align: C
 }
 
 function speech(x: number, y: number, s: string): void {
-  ctx.font = "7px monospace";
+  ctx.font = `8px ${FONT}`;
   const w = Math.ceil(ctx.measureText(s).width) + 6;
   const bx = Math.round(x - w / 2);
   const by = Math.round(y - 10);
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(bx, by, w, 9);
+  ctx.fillRect(bx, by, w, 11);
   ctx.fillStyle = "#111111";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(s, bx + w / 2, by + 4.5);
+  ctx.fillText(s, bx + w / 2, by + 5.5);
 }
 
 function drawBank(m: MapDef): void {
+  // Banks: each map has its own ground around the pond
   ctx.fillStyle = m.bank;
   ctx.fillRect(0, 0, W, POND.y0);
   ctx.fillRect(0, POND.y1, W, H - POND.y1);
+  const id = mapKey(m);
+  if (id === "kiddie") {
+    // Sand speckles and a little pebble path
+    ctx.fillStyle = "#e6bd6c";
+    for (let i = 0; i < 60; i++) ctx.fillRect((i * 97) % W, (i * 41) % POND.y0, 1, 1);
+    for (let i = 0; i < 40; i++) ctx.fillRect((i * 53 + 7) % W, POND.y1 + ((i * 29) % (H - POND.y1)), 1, 1);
+  } else if (id === "sewer") {
+    // Concrete slabs with grime seams
+    ctx.fillStyle = "#4a4e48";
+    for (let x = 0; x < W; x += 32) ctx.fillRect(x, 0, 1, POND.y0);
+    for (let y = 0; y < POND.y0; y += 12) ctx.fillRect(0, y, W, 1);
+    ctx.fillStyle = "rgba(90,140,70,0.35)";
+    for (let i = 0; i < 12; i++) ctx.fillRect((i * 71) % W, (i * 23) % POND.y0, 14, 3);
+  } else {
+    // Mud with clumps of grass
+    ctx.fillStyle = "#3a2e1a";
+    for (let i = 0; i < 40; i++) ctx.fillRect((i * 89) % W, (i * 13) % POND.y0, 3, 2);
+    ctx.fillStyle = "#4f7a2e";
+    for (let i = 0; i < 14; i++) ctx.fillRect((i * 97 + 20) % W, POND.y1 + 4 + ((i * 7) % 8), 4, 3);
+  }
+}
+
+function mapKey(m: MapDef): MapId {
+  return (Object.keys(MAPS) as MapId[]).find((k) => MAPS[k] === m) ?? "kiddie";
+}
+
+// Scenery drawn on the water, under the fish
+function drawScenery(m: MapId): void {
+  const t = clock;
+  if (m === "kiddie") {
+    // Tiled pool edge
+    for (let x = POND.x0; x < POND.x1; x += 6) {
+      ctx.fillStyle = (x / 6) % 2 === 0 ? "#ffffff" : "#8fe3ff";
+      ctx.fillRect(x, POND.y0, 6, 3);
+      ctx.fillRect(x, POND.y1 - 3, 6, 3);
+    }
+    // Rubber ring float with a highlight
+    ctx.fillStyle = "#ff5c8a";
+    ctx.beginPath(); ctx.ellipse(60, 66, 11, 8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#7fe3ff";
+    ctx.beginPath(); ctx.ellipse(60, 66, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd0e0";
+    ctx.fillRect(52, 61, 3, 1);
+    // Toy boat
+    const bx = 250 + Math.sin(t * 0.7) * 2;
+    ctx.fillStyle = "#e33b3b";
+    ctx.beginPath(); ctx.moveTo(bx - 12, 58); ctx.lineTo(bx + 12, 58); ctx.lineTo(bx + 9, 66); ctx.lineTo(bx - 9, 66); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(Math.round(bx - 12), 56, 24, 2);
+    ctx.fillStyle = "#c08a4a";
+    ctx.fillRect(Math.round(bx) - 1, 42, 2, 14);
+    ctx.fillStyle = "#ffd23f";
+    ctx.fillRect(Math.round(bx) + 1, 43, 6, 4);
+    // Beach ball
+    ctx.fillStyle = "#ff5c8a"; ctx.beginPath(); ctx.arc(120, 150, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd23f"; ctx.fillRect(114, 148, 4, 2);
+    ctx.fillStyle = "#7fe3ff"; ctx.fillRect(122, 145, 3, 2);
+    // Pool ladder on the right edge
+    ctx.fillStyle = "#dfe8ee";
+    ctx.fillRect(304, 84, 2, 26); ctx.fillRect(312, 84, 2, 26);
+    for (let y = 88; y < 110; y += 5) ctx.fillRect(304, y, 10, 1);
+    // Bubbles rising from the sandcastle
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    for (let i = 0; i < 3; i++) ctx.fillRect(280 + i * 3, 150 - ((t * 12 + i * 9) % 20), 1, 1);
+    // Sandcastle
+    ctx.fillStyle = "#f6d07a";
+    ctx.fillRect(264, 150, 26, 12);
+    ctx.fillRect(268, 143, 18, 7);
+    ctx.fillRect(272, 139, 10, 4);
+    ctx.fillStyle = "#b8862c";
+    ctx.fillRect(264, 161, 26, 1);
+    ctx.fillStyle = "#ff5c8a"; ctx.fillRect(276, 134, 1, 5); ctx.fillRect(277, 134, 3, 2);
+  } else if (m === "sewer") {
+    // Grates sunk in the water
+    ctx.fillStyle = "#1a1f1a";
+    ctx.fillRect(22, 140, 30, 22);
+    ctx.fillRect(250, 116, 36, 24);
+    ctx.fillStyle = "#4a5a4a";
+    for (let x = 24; x < 52; x += 4) ctx.fillRect(x, 141, 1, 20);
+    for (let y = 142; y < 162; y += 4) ctx.fillRect(23, y, 28, 1);
+    for (let x = 252; x < 286; x += 4) ctx.fillRect(x, 117, 1, 22);
+    for (let y = 118; y < 140; y += 4) ctx.fillRect(251, y, 34, 1);
+    // Pipe outlets in the bank, dripping slime
+    for (const px of [72, 210]) {
+      ctx.fillStyle = "#2b2f2b";
+      ctx.fillRect(px, 0, 22, 18);
+      ctx.fillStyle = "#555b55";
+      ctx.fillRect(px - 2, 14, 26, 4);
+      ctx.fillStyle = "#6fdc4a";
+      ctx.fillRect(px + 9, 18 + ((t * 10) % 8), 3, 3);
+    }
+    // Slime pools
+    for (const [x, y, r] of [[120, 74, 9], [190, 150, 7]] as const) {
+      ctx.fillStyle = "rgba(111,220,74,0.55)";
+      ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(200,255,160,0.6)";
+      ctx.fillRect(x - r * 0.4, y - 1, 3, 1);
+    }
+    // Trash drifting slowly
+    const drift = (k: number, base: number) => ((base + t * (5 + k)) % (POND.x1 - POND.x0)) + POND.x0;
+    ctx.fillStyle = "#3a7a3a"; ctx.fillRect(Math.round(drift(1, 40)), 96, 3, 6);   // bottle
+    ctx.fillStyle = "#c8c8d0"; ctx.fillRect(Math.round(drift(2, 180)), 60, 4, 3);  // can
+    ctx.fillStyle = "#e0d060"; ctx.fillRect(Math.round(drift(3, 260)), 130, 3, 2); // wrapper
+  } else {
+    // Lily pads with notches and flowers
+    const pads: [number, number, number][] = [[46, 58, 9], [96, 120, 8], [150, 72, 7], [206, 124, 10], [270, 66, 8], [236, 150, 6]];
+    for (const [x, y, r] of pads) {
+      ctx.fillStyle = "#3f8a3a";
+      ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.6, 0, 0.2, Math.PI * 2 - 0.2); ctx.fill();
+      ctx.fillStyle = "#5fae4f";
+      ctx.beginPath(); ctx.ellipse(x - 1, y - 1, r * 0.5, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = "#ff9ad0";
+    ctx.fillRect(150, 70, 2, 2);
+    ctx.fillRect(268, 64, 2, 2);
+    // Fallen log across the pond
+    ctx.fillStyle = "#5a3a1e";
+    ctx.beginPath(); ctx.ellipse(200, 100, 36, 4, -0.12, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#7a5230";
+    ctx.beginPath(); ctx.ellipse(200, 99, 34, 2.5, -0.12, 0, Math.PI * 2); ctx.fill();
+    // Reeds on the left and right edges
+    for (let i = 0; i < 9; i++) {
+      const rx = i < 5 ? POND.x0 + 2 + i * 3 : POND.x1 - 2 - (i - 5) * 3;
+      const top = POND.y0 + 10 + ((i * 17) % 40);
+      ctx.fillStyle = "#4d7a2a";
+      ctx.fillRect(rx, top, 1, POND.y1 - top);
+      ctx.fillStyle = "#6b4a22";
+      ctx.fillRect(rx - 1, top - 3, 3, 4);
+    }
+    // Mud bubbles
+    ctx.fillStyle = "rgba(220,230,180,0.5)";
+    for (let i = 0; i < 4; i++) ctx.fillRect(60 + i * 70, POND.y1 - 6 - ((t * 9 + i * 13) % 30), 2, 2);
+  }
 }
 
 function drawWater(m: MapId): void {
@@ -598,33 +806,7 @@ function drawWater(m: MapId): void {
     ctx.fillRect(Math.round(x), Math.round(y), 6, 1);
   }
 
-  // Map decorations
-  if (m === "kiddie") {
-    ctx.strokeStyle = "#ff5c8a";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(60, 66, 8, 5, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = "#f6d07a";
-    ctx.fillRect(266, 150, 22, 10);
-    ctx.fillRect(270, 144, 14, 6);
-    ctx.fillRect(274, 140, 6, 4);
-  } else if (m === "sewer") {
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    for (let x = 24; x < 52; x += 4) ctx.fillRect(x, 146, 1, 16);
-    for (let y = 146; y < 162; y += 4) ctx.fillRect(24, y, 28, 1);
-    for (const p of deco) {
-      ctx.fillStyle = "#c9b458";
-      ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
-    }
-  } else if (m === "swamp") {
-    for (const p of deco) {
-      ctx.fillStyle = "#3f8a3a";
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y, p.r, p.r * 0.6, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
+  drawScenery(m);
 
   if (disco) {
     ctx.fillStyle = `hsla(${hue},100%,70%,0.14)`;
@@ -647,6 +829,60 @@ function drawButtons(): void {
     ctx.fillRect(b.x, b.y, b.w, b.h);
     txt(b.label, b.x + b.w / 2, b.y + b.h / 2, "#2b1b0e", 8, "center");
   });
+}
+
+function burst(x: number, y: number, color: string, n: number): void {
+  for (let i = 0; i < n; i++) {
+    particles.push({ x, y, vx: rnd(-40, 40), vy: rnd(-70, 10), t: rnd(0.4, 0.9), c: i % 2 ? color : "#ffffff" });
+  }
+}
+
+function updateParticles(dt: number): void {
+  for (const p of particles) {
+    p.t -= dt;
+    p.vy += 120 * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+  particles = particles.filter((p) => p.t > 0);
+  if (shakeT > 0) {
+    shakeT -= dt;
+    shakeX = rnd(-1.5, 1.5) * Math.max(0, shakeT);
+    shakeY = rnd(-1.5, 1.5) * Math.max(0, shakeT);
+  } else {
+    shakeX = 0;
+    shakeY = 0;
+  }
+}
+
+function drawParticles(): void {
+  for (const p of particles) {
+    ctx.fillStyle = p.c;
+    ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
+  }
+}
+
+// The reel bar: green zone, yellow marker, and a catch meter beside it
+function drawReelPanel(): void {
+  const top = 40;
+  const h = 120;
+  const x = 286;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(x - 3, top - 3, 30, h + 6);
+  const zTop = top + h - (bob.zoneC + ZONE / 2) * h;
+  ctx.fillStyle = bob.inZone ? "#7dff7d" : "#2f8f3f";
+  ctx.fillRect(x, zTop, 10, ZONE * h);
+  ctx.fillStyle = "#ffd23f";
+  ctx.fillRect(x - 2, top + h - bob.marker * h - 1, 14, 2);
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(x + 16, top, 5, h);
+  ctx.fillStyle = "#7fe0ff";
+  ctx.fillRect(x + 16, top + h - bob.progress * h, 5, bob.progress * h);
+  if (bob.strain > 0.5) {
+    ctx.fillStyle = `rgba(255,60,60,${0.25 + 0.25 * Math.sin(clock * 20)})`;
+    ctx.fillRect(x - 3, top - 3, 30, h + 6);
+  }
+  txt("REEL", x - 2, top - 9, "#ffffff", 8);
 }
 
 function drawPlay(): void {
@@ -691,10 +927,22 @@ function drawPlay(): void {
   // Floating points
   for (const p of floaters) txt(p.text, p.x, p.y, "#ffd23f", 8, "center");
 
+  // Strike ring: shrinks toward the bobber, click when it's thin for a PERFECT
+  if (bob.state === "bite") {
+    const radius = 3 + 11 * (bob.biteT / 1.0);
+    ctx.strokeStyle = radius < 4.5 ? "#ffd23f" : "#ff4d4d";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(bob.x, bob.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  drawParticles();
+
   // Bite prompt
   if (bob.state === "bite" && Math.floor(clock * 6) % 2 === 0) {
     txt("!", bob.x, bob.y - 16, "#ff4d4d", 16, "center");
-    txt("CLICK!", bob.x, bob.y - 26, "#ffffff", 7, "center");
+    txt("CLICK!", bob.x, bob.y - 26, "#ffffff", 8, "center");
   }
 
   // Charge meter
@@ -705,16 +953,7 @@ function drawPlay(): void {
     ctx.fillRect(111, 27, 98 * bob.charge, 3);
   }
 
-  // Tension meter while fighting
-  if (bob.state === "fight") {
-    const tension = clamp(bob.tension, 0, 1);
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(298, 44, 8, 118);
-    const color = bob.tension < 0.8 ? "#5fd35f" : bob.tension < 1 ? "#ffd23f" : "#ff4d4d";
-    ctx.fillStyle = color;
-    ctx.fillRect(299, 161 - tension * 116, 6, tension * 116);
-    txt("LINE", 302, 38, "#ffffff", 6, "center");
-  }
+  if (bob.state === "fight") drawReelPanel();
 
   drawHud();
 }
@@ -729,13 +968,17 @@ function drawHud(): void {
   }
   txt(MAPS[mapId].label, W - 6, 18, "#ffffff", 8, "right");
 
-  txt(bob.state === "idle" ? "CLICK + HOLD TO CAST" : bob.state === "fight" ? "HOLD TO REEL, RELEASE TO EASE" : "", 6, 174, "#ffffff", 7);
+  const hint =
+    bob.state === "idle" ? "CLICK + HOLD TO CAST" :
+    bob.state === "bite" ? "CLICK THE RING!" :
+    bob.state === "fight" ? "HOLD TO LIFT, KEEP IT IN GREEN" : "";
+  txt(hint, 6, 174, "#ffffff", 8);
 
   if (banner.t > 0) {
     const flash = Math.floor(clock * 6) % 2 === 0 ? "#ffd23f" : "#ff6b6b";
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillRect(40, 60, W - 80, 16);
-    txt(banner.text, W / 2, 68, flash, 9, "center");
+    txt(banner.text, W / 2, 68, flash, 8, "center");
   }
   if (quip.t > 0) speech(160, 150, quip.text);
   if (toast.t > 0) {
@@ -760,9 +1003,9 @@ function drawFrame(): void {
   drawWater("kiddie");
   if (scene === "title") {
     txt("REEL GOOBERS", W / 2, 20, "#ffd23f", 20, "center");
-    txt("a pixel fishing game", W / 2, 34, "#ffffff", 7, "center");
+    txt("a pixel fishing game", W / 2, 34, "#ffffff", 8, "center");
     drawButtons();
-    txt(`BEST TOURNEY: ${save.best}   TROPHIES: ${save.trophies.length}/${TROPHIES.length}`, W / 2, 168, "#ffffff", 7, "center");
+    txt(`BEST TOURNEY: ${save.best}   TROPHIES: ${save.trophies.length}/${TROPHIES.length}`, W / 2, 168, "#ffffff", 8, "center");
   } else {
     txt("TIME'S UP!", W / 2, 30, "#ffd23f", 16, "center");
     txt(`SCORE ${score}`, W / 2, 62, "#ffffff", 14, "center");
@@ -778,9 +1021,13 @@ function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   update(dt);
+  ctx.setTransform(SCALE, 0, 0, SCALE, shakeX * SCALE, shakeY * SCALE);
   drawFrame();
   requestAnimationFrame(frame);
 }
 
+// Ask the browser to load the pixel fonts; the loop redraws with them as soon as they arrive.
+void document.fonts?.load(`8px ${FONT}`);
+loadAtlas("assets/pixelfishes.png");
 setScene("title");
 requestAnimationFrame(frame);
