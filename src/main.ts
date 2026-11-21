@@ -8,6 +8,9 @@ const H = 180;
 const POND = { x0: 8, x1: 312, y0: 36, y1: 168 };
 const ROD = { x: 160, y: 20 };
 const SAVE_KEY = "reelgoobers.v1";
+// The 320x180 game is drawn at 6x into a 1920x1080 canvas, so pixels stay chunky and text stays legible.
+const SCALE = 6;
+const FONT = '"Press Start 2P", monospace';
 
 type MapId = "kiddie" | "sewer" | "swamp";
 type Scene = "title" | "play" | "over" | "room";
@@ -551,7 +554,7 @@ function update(dt: number): void {
 
 // ---------- Drawing ----------
 function txt(s: string, x: number, y: number, color = "#fff", size = 8, align: CanvasTextAlign = "left"): void {
-  ctx.font = `${size}px monospace`;
+  ctx.font = `${size}px ${FONT}`;
   ctx.textAlign = align;
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(0,0,0,0.6)";
@@ -561,16 +564,16 @@ function txt(s: string, x: number, y: number, color = "#fff", size = 8, align: C
 }
 
 function speech(x: number, y: number, s: string): void {
-  ctx.font = "7px monospace";
+  ctx.font = `8px ${FONT}`;
   const w = Math.ceil(ctx.measureText(s).width) + 6;
   const bx = Math.round(x - w / 2);
   const by = Math.round(y - 10);
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(bx, by, w, 9);
+  ctx.fillRect(bx, by, w, 11);
   ctx.fillStyle = "#111111";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(s, bx + w / 2, by + 4.5);
+  ctx.fillText(s, bx + w / 2, by + 5.5);
 }
 
 function drawBank(m: MapDef): void {
@@ -694,7 +697,7 @@ function drawPlay(): void {
   // Bite prompt
   if (bob.state === "bite" && Math.floor(clock * 6) % 2 === 0) {
     txt("!", bob.x, bob.y - 16, "#ff4d4d", 16, "center");
-    txt("CLICK!", bob.x, bob.y - 26, "#ffffff", 7, "center");
+    txt("CLICK!", bob.x, bob.y - 26, "#ffffff", 8, "center");
   }
 
   // Charge meter
@@ -713,7 +716,7 @@ function drawPlay(): void {
     const color = bob.tension < 0.8 ? "#5fd35f" : bob.tension < 1 ? "#ffd23f" : "#ff4d4d";
     ctx.fillStyle = color;
     ctx.fillRect(299, 161 - tension * 116, 6, tension * 116);
-    txt("LINE", 302, 38, "#ffffff", 6, "center");
+    txt("LINE", 302, 38, "#ffffff", 8, "center");
   }
 
   drawHud();
@@ -729,13 +732,13 @@ function drawHud(): void {
   }
   txt(MAPS[mapId].label, W - 6, 18, "#ffffff", 8, "right");
 
-  txt(bob.state === "idle" ? "CLICK + HOLD TO CAST" : bob.state === "fight" ? "HOLD TO REEL, RELEASE TO EASE" : "", 6, 174, "#ffffff", 7);
+  txt(bob.state === "idle" ? "CLICK + HOLD TO CAST" : bob.state === "fight" ? "HOLD TO REEL, RELEASE TO EASE" : "", 6, 174, "#ffffff", 8);
 
   if (banner.t > 0) {
     const flash = Math.floor(clock * 6) % 2 === 0 ? "#ffd23f" : "#ff6b6b";
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillRect(40, 60, W - 80, 16);
-    txt(banner.text, W / 2, 68, flash, 9, "center");
+    txt(banner.text, W / 2, 68, flash, 8, "center");
   }
   if (quip.t > 0) speech(160, 150, quip.text);
   if (toast.t > 0) {
@@ -760,9 +763,9 @@ function drawFrame(): void {
   drawWater("kiddie");
   if (scene === "title") {
     txt("REEL GOOBERS", W / 2, 20, "#ffd23f", 20, "center");
-    txt("a pixel fishing game", W / 2, 34, "#ffffff", 7, "center");
+    txt("a pixel fishing game", W / 2, 34, "#ffffff", 8, "center");
     drawButtons();
-    txt(`BEST TOURNEY: ${save.best}   TROPHIES: ${save.trophies.length}/${TROPHIES.length}`, W / 2, 168, "#ffffff", 7, "center");
+    txt(`BEST TOURNEY: ${save.best}   TROPHIES: ${save.trophies.length}/${TROPHIES.length}`, W / 2, 168, "#ffffff", 8, "center");
   } else {
     txt("TIME'S UP!", W / 2, 30, "#ffd23f", 16, "center");
     txt(`SCORE ${score}`, W / 2, 62, "#ffffff", 14, "center");
@@ -778,9 +781,12 @@ function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   update(dt);
+  ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
   drawFrame();
   requestAnimationFrame(frame);
 }
 
+// Ask the browser to load the pixel fonts; the loop redraws with them as soon as they arrive.
+void document.fonts?.load(`8px ${FONT}`);
 setScene("title");
 requestAnimationFrame(frame);
