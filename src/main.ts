@@ -6,6 +6,8 @@ import { TROPHIES, drawRoom } from "./trophies";
 const W = 320;
 const H = 180;
 const POND = { x0: 8, x1: 312, y0: 36, y1: 168 };
+// The kiddie pool is a round inflatable inside the pond area
+const POOL = { cx: 160, cy: 102, rx: 140, ry: 58 };
 const ROD = { x: 34, y: 164 }; // the player stands at the bottom left
 const SAVE_KEY = "reelgoobers.v1";
 // The 320x180 game is drawn at 6x into a 1920x1080 canvas, so pixels stay chunky and text stays legible.
@@ -190,6 +192,20 @@ function pickTarget(f: Fish): void {
   f.wander = rnd(2, 5);
 }
 
+// Keeps things inside the water: the rectangle, or the round pool on the kiddie map
+function clampPond(x: number, y: number, pad = 6): { x: number; y: number } {
+  if (mapId !== "kiddie") {
+    return { x: clamp(x, POND.x0 + pad, POND.x1 - pad), y: clamp(y, POND.y0 + pad, POND.y1 - pad) };
+  }
+  const rx = POOL.rx - pad;
+  const ry = POOL.ry - pad;
+  const dx = (x - POOL.cx) / rx;
+  const dy = (y - POOL.cy) / ry;
+  const r = Math.hypot(dx, dy);
+  if (r <= 1) return { x, y };
+  return { x: POOL.cx + (dx / r) * rx, y: POOL.cy + (dy / r) * ry };
+}
+
 function updateFish(f: Fish, dt: number): void {
   if (f.dead) return;
   if (f.bubbleT > 0) f.bubbleT -= dt;
@@ -203,8 +219,9 @@ function updateFish(f: Fish, dt: number): void {
   f.vx += ((dx / d) * speed - f.vx) * Math.min(1, dt * 2);
   f.vy += ((dy / d) * speed * 0.5 - f.vy) * Math.min(1, dt * 2);
   if (d < 5) pickTarget(f);
-  f.x = clamp(f.x + f.vx * flow * dt, POND.x0 + 6, POND.x1 - 6);
-  f.y = clamp(f.y + f.vy * dt, POND.y0 + 8, POND.y1 - 6);
+  const np = clampPond(f.x + f.vx * flow * dt, f.y + f.vy * dt, 8);
+  f.x = np.x;
+  f.y = np.y;
   f.mouthT -= dt * (ev.kind === "frenzy" ? 3 : 1);
   if (f.mouthT <= 0) {
     f.mouthOpen = !f.mouthOpen;
@@ -267,14 +284,31 @@ function resetBob(): void {
 }
 
 function cast(): void {
-  // The bobber goes exactly where you clicked, anywhere on the pond
+  // Aim with the mouse; hold time sets how far it goes. A quick tap is a short cast.
+  const power = clamp(bob.charge, 0.08, 1);
+  const dx = mx - ROD.x;
+  const dy = my - ROD.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const dist = Math.min(len, castReach(power));
+  const p = clampPond(ROD.x + (dx / len) * dist, ROD.y + (dy / len) * dist, 6);
   bob.sx = bob.x;
   bob.sy = bob.y;
-  bob.tx = clamp(mx, POND.x0 + 6, POND.x1 - 6);
-  bob.ty = clamp(my, POND.y0 + 6, POND.y1 - 6);
+  bob.tx = p.x;
+  bob.ty = p.y;
   bob.flyT = 0;
   bob.state = "fly";
   sfx("cast");
+}
+
+function castReach(power: number): number {
+  return 30 + 230 * power;
+}
+
+// Right-click cancels whatever you're doing and reels the line back in
+function cancelCast(): void {
+  if (bob.state === "idle") return;
+  resetBob();
+  sfx("click");
 }
 function bite(f: Fish): void {
   bob.state = "bite";
@@ -361,8 +395,9 @@ function fightStep(dt: number): void {
   const run = sp.strength * 12;
   const step = held ? pull : -run;
   const wiggle = Math.sin(clock * 6 + f.phase) * 10; // fish wriggles sideways
-  f.x = clamp(f.x + ux * step * dt - uy * wiggle * dt, POND.x0, POND.x1);
-  f.y = clamp(f.y + uy * step * dt + ux * wiggle * dt, POND.y0, POND.y1);
+  const nf = clampPond(f.x + ux * step * dt - uy * wiggle * dt, f.y + uy * step * dt + ux * wiggle * dt, 4);
+  f.x = nf.x;
+  f.y = nf.y;
   bob.dist = d;
 
   if (!held && f.bubbleT <= 0 && Math.random() < dt * 0.6) {
@@ -574,8 +609,13 @@ function setPointer(e: PointerEvent): void {
 }
 
 canvas.addEventListener("pointermove", setPointer);
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("pointerdown", (e) => {
   setPointer(e);
+  if (e.button === 2) {
+    if (scene === "play") cancelCast();
+    return;
+  }
   unlockAudio();
   held = true;
   if (scene !== "play") {
@@ -672,14 +712,13 @@ function drawBank(m: MapDef): void {
   ctx.fillRect(0, POND.y1, W, H - POND.y1);
   const id = mapKey(m);
   if (id === "kiddie") {
-    // Pool deck: white tiles with light-blue grout
-    ctx.fillStyle = "#9fdcf2";
-    for (let x = 0; x < W; x += 12) ctx.fillRect(x, 0, 1, POND.y0);
-    for (let y = 0; y < POND.y0; y += 12) ctx.fillRect(0, y, W, 1);
-    for (let x = 0; x < W; x += 12) ctx.fillRect(x, POND.y1, 1, H - POND.y1);
-    for (let y = POND.y1; y < H; y += 12) ctx.fillRect(0, y, W, 1);
-    ctx.fillStyle = "#ffffff";
-    for (let x = 0; x < W; x += 12) for (let y = 2; y < POND.y0; y += 12) ctx.fillRect(x + 2, y, 8, 8);
+    // Lawn with mowing stripes
+    ctx.fillStyle = "#63c456";
+    ctx.fillRect(0, 0, W, POND.y0);
+    ctx.fillRect(0, POND.y1, W, H - POND.y1);
+    ctx.fillStyle = "#58b84c";
+    for (let x = 0; x < W; x += 24) ctx.fillRect(x, 0, 12, POND.y0);
+    for (let x = 0; x < W; x += 24) ctx.fillRect(x, POND.y1, 12, H - POND.y1);
   } else if (id === "sewer") {
     // Concrete slabs with grime seams
     ctx.fillStyle = "#4a4e48";
@@ -704,72 +743,82 @@ function mapKey(m: MapDef): MapId {
 function drawScenery(m: MapId): void {
   const t = clock;
   if (m === "kiddie") {
-    // Tiled rim all the way round, so the water reads as an enclosed pool
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(POND.x0 - 4, POND.y0 - 4, POND.x1 - POND.x0 + 8, 4);
-    ctx.fillRect(POND.x0 - 4, POND.y1, POND.x1 - POND.x0 + 8, 4);
-    ctx.fillRect(POND.x0 - 4, POND.y0, 4, POND.y1 - POND.y0);
-    ctx.fillRect(POND.x1, POND.y0, 4, POND.y1 - POND.y0);
-    for (let x = POND.x0 - 4; x < POND.x1 + 4; x += 6) {
-      ctx.fillStyle = (x / 6) % 2 === 0 ? "#2aa8e0" : "#9fe6ff";
-      ctx.fillRect(x, POND.y0 - 4, 3, 2);
-      ctx.fillRect(x, POND.y1 + 2, 3, 2);
-    }
-    // Lane ropes of floating buoys, the classic pool look
-    for (const ly of [84, 124]) {
-      for (let x = POND.x0 + 4; x < POND.x1 - 4; x += 8) {
-        ctx.fillStyle = (x / 8) % 2 === 0 ? "#ff4d4d" : "#ffffff";
-        ctx.fillRect(x, ly, 5, 3);
-      }
-      ctx.fillStyle = "rgba(255,255,255,0.7)";
-      ctx.fillRect(POND.x0 + 4, ly + 1, POND.x1 - POND.x0 - 8, 1);
-    }
-    // Rubber ring float with a highlight
+    // Inflatable ring around the pool: pink with white dashes
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#ff5c8a";
+    ctx.beginPath();
+    ctx.ellipse(POOL.cx, POOL.cy, POOL.rx + 3, POOL.ry + 3, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#ffffff";
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.ellipse(POOL.cx, POOL.cy, POOL.rx + 3, POOL.ry + 3, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineWidth = 1;
+
+    // Floats on the water
     ctx.fillStyle = "#ff5c8a";
-    ctx.beginPath(); ctx.ellipse(60, 66, 11, 8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(92, 84, 10, 7, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#7fe3ff";
-    ctx.beginPath(); ctx.ellipse(60, 66, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#ffd0e0";
-    ctx.fillRect(52, 61, 3, 1);
-    // Toy boat
-    const bx = 250 + Math.sin(t * 0.7) * 2;
+    ctx.beginPath(); ctx.ellipse(92, 84, 4, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+    const bx = 226 + Math.sin(t * 0.7) * 2;
     ctx.fillStyle = "#e33b3b";
-    ctx.beginPath(); ctx.moveTo(bx - 12, 58); ctx.lineTo(bx + 12, 58); ctx.lineTo(bx + 9, 66); ctx.lineTo(bx - 9, 66); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(bx - 10, 66); ctx.lineTo(bx + 10, 66); ctx.lineTo(bx + 8, 73); ctx.lineTo(bx - 8, 73); ctx.closePath(); ctx.fill();
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(Math.round(bx - 12), 56, 24, 2);
+    ctx.fillRect(Math.round(bx - 10), 64, 20, 2);
     ctx.fillStyle = "#c08a4a";
-    ctx.fillRect(Math.round(bx) - 1, 42, 2, 14);
+    ctx.fillRect(Math.round(bx) - 1, 52, 2, 13);
     ctx.fillStyle = "#ffd23f";
-    ctx.fillRect(Math.round(bx) + 1, 43, 6, 4);
-    // Beach ball
-    ctx.fillStyle = "#ff5c8a"; ctx.beginPath(); ctx.arc(120, 150, 6, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#ffd23f"; ctx.fillRect(114, 148, 4, 2);
-    ctx.fillStyle = "#7fe3ff"; ctx.fillRect(122, 145, 3, 2);
-    // Pool ladder on the right edge
-    ctx.fillStyle = "#dfe8ee";
-    ctx.fillRect(304, 84, 2, 26); ctx.fillRect(312, 84, 2, 26);
-    for (let y = 88; y < 110; y += 5) ctx.fillRect(304, y, 10, 1);
-    // A rubber duck bobbing in the corner
+    ctx.fillRect(Math.round(bx) + 1, 53, 5, 4);
+    ctx.fillStyle = "#ff5c8a"; ctx.beginPath(); ctx.arc(112, 128, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd23f"; ctx.fillRect(107, 126, 4, 2);
+    ctx.fillStyle = "#7fe3ff"; ctx.fillRect(114, 123, 3, 2);
+    // Rubber duck bobbing
     const duckY = 118 + Math.sin(t * 2) * 1.2;
     ctx.fillStyle = "#ffd23f";
-    ctx.beginPath(); ctx.ellipse(150, duckY, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(146, duckY - 4, 3, 2);
-    ctx.fillStyle = "#ff8c1a";
-    ctx.fillRect(155, duckY - 1, 3, 2);
-    ctx.fillStyle = "#101010";
-    ctx.fillRect(152, duckY - 3, 1, 1);
-    // Bubbles rising from the sandcastle
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    for (let i = 0; i < 3; i++) ctx.fillRect(280 + i * 3, 150 - ((t * 12 + i * 9) % 20), 1, 1);
-    // Sandcastle
-    ctx.fillStyle = "#f6d07a";
-    ctx.fillRect(264, 150, 26, 12);
-    ctx.fillRect(268, 143, 18, 7);
-    ctx.fillRect(272, 139, 10, 4);
-    ctx.fillStyle = "#b8862c";
-    ctx.fillRect(264, 161, 26, 1);
-    ctx.fillStyle = "#ff5c8a"; ctx.fillRect(276, 134, 1, 5); ctx.fillRect(277, 134, 3, 2);
+    ctx.beginPath(); ctx.ellipse(170, duckY, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(166, duckY - 4, 3, 2);
+    ctx.fillStyle = "#ff8c1a"; ctx.fillRect(175, duckY - 1, 3, 2);
+    ctx.fillStyle = "#101010"; ctx.fillRect(172, duckY - 3, 1, 1);
+
+    // Backyard: striped umbrella bottom left
+    ctx.fillStyle = "#8a5a2b";
+    ctx.fillRect(33, 146, 2, 18);
+    for (let i = 0; i < 6; i++) {
+      ctx.fillStyle = i % 2 ? "#ffffff" : "#ff5c5c";
+      ctx.beginPath();
+      ctx.moveTo(34, 144);
+      ctx.arc(34, 144, 12, Math.PI + (i * Math.PI) / 6, Math.PI + ((i + 1) * Math.PI) / 6);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Garden hose coiled top left
+    ctx.strokeStyle = "#2fa34a";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(26, 50, 8, 5, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(26, 50, 4, 2.5, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = 1;
+    // Lounge chairs on the lawn, right side
+    for (const [lx, ly] of [[282, 40], [282, 146]] as const) {
+      ctx.fillStyle = "#ffd23f";
+      ctx.fillRect(lx, ly, 18, 4);
+      ctx.fillStyle = "#ffffff";
+      for (let i = 0; i < 18; i += 6) ctx.fillRect(lx + i, ly, 2, 4);
+      ctx.fillStyle = "#ffd23f";
+      ctx.fillRect(lx - 4, ly - 8, 5, 10);
+    }
+    // Flowers dotted across the lawn
+    const flowers: [number, number, string][] = [[12, 30, "#ff5c8a"], [48, 36, "#ffd23f"], [120, 40, "#ffffff"], [222, 40, "#ff5c8a"], [246, 160, "#ffd23f"], [14, 128, "#ffffff"], [18, 100, "#ff5c8a"], [66, 164, "#ffd23f"], [226, 166, "#ffffff"], [306, 92, "#ffd23f"], [306, 66, "#ff5c8a"], [196, 164, "#ff5c8a"]];
+    for (const [fx, fy, fc] of flowers) {
+      ctx.fillStyle = fc;
+      ctx.fillRect(fx - 1, fy - 2, 2, 1);
+      ctx.fillRect(fx - 2, fy - 1, 4, 2);
+      ctx.fillRect(fx - 1, fy + 1, 2, 1);
+      ctx.fillStyle = "#3a7a2a";
+      ctx.fillRect(fx, fy + 2, 1, 2);
+    }
   } else if (m === "sewer") {
     // Grates sunk in the water
     ctx.fillStyle = "#1a1f1a";
@@ -858,8 +907,18 @@ function drawWater(m: MapId): void {
   const g = ctx.createLinearGradient(0, POND.y0, 0, POND.y1);
   g.addColorStop(0, disco ? `hsl(${hue},70%,60%)` : d.top);
   g.addColorStop(1, disco ? `hsl(${(hue + 160) % 360},70%,25%)` : d.bottom);
-  ctx.fillStyle = g;
-  ctx.fillRect(POND.x0, POND.y0, POND.x1 - POND.x0, POND.y1 - POND.y0);
+  if (m === "kiddie") {
+    // Lawn, then a round pool of water on top
+    ctx.fillStyle = "#7ad85a";
+    ctx.fillRect(POND.x0, POND.y0, POND.x1 - POND.x0, POND.y1 - POND.y0);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(POOL.cx, POOL.cy, POOL.rx, POOL.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = g;
+    ctx.fillRect(POND.x0, POND.y0, POND.x1 - POND.x0, POND.y1 - POND.y0);
+  }
 
   // Ripples drifting across the surface
   ctx.fillStyle = "rgba(255,255,255,0.18)";
@@ -957,6 +1016,27 @@ function drawPlay(): void {
     ctx.fillRect(Math.round(bob.x) - 1, Math.round(bob.y) - 1, 3, 2);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(Math.round(bob.x) - 1, Math.round(bob.y) + 1, 3, 2);
+  }
+
+  // Aim preview while you hold the mouse: a dotted line and a marker where it will land
+  if (bob.state === "charging") {
+    const power = clamp(bob.charge, 0.08, 1);
+    const dx = mx - ROD.x;
+    const dy = my - ROD.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const dist = Math.min(len, castReach(power));
+    const p = clampPond(ROD.x + (dx / len) * dist, ROD.y + (dy / len) * dist, 6);
+    ctx.strokeStyle = "rgba(255,255,255,0.8)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(ROD.x, ROD.y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#ffd23f";
+    ctx.fillRect(Math.round(p.x) - 2, Math.round(p.y) - 1, 4, 2);
+    ctx.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 2, 2, 4);
   }
 
   // Fish, back to front, with shadows
