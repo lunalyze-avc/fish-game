@@ -119,8 +119,14 @@ export function paintFish(
   // Eye
   const ex = cx + facing * rx * 0.45;
   const ey = cy - ry * 0.25;
-  put(ex, ey, "#ffffff");
-  put(ex + facing, ey + 1, "#101010");
+  // Eyes blink now and then
+  const blinking = (t * 0.37) % 1 < 0.06;
+  if (blinking) {
+    put(ex, ey + 1, "#101010");
+  } else {
+    put(ex, ey, "#ffffff");
+    put(ex + facing, ey + 1, "#101010");
+  }
 
   // Mouth: two pixels tall when open, one when closed
   const mx = cx + facing * rx * 0.95;

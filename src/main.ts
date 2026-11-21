@@ -210,6 +210,9 @@ function updateFish(f: Fish, dt: number): void {
     f.mouthT = f.mouthOpen ? rnd(0.5, 0.9) : rnd(1.5, 3);
   }
   if (ev.kind === "rebellion" && ev.t < 3) f.mouthOpen = false;
+  if (Math.random() < dt * 0.5) {
+    particles.push({ x: f.x + rnd(-3, 3), y: f.y - SPECIES[f.key].h / 2, vx: 0, vy: -14, t: 1.2, c: "#e8faff" });
+  }
 }
 
 // ---------- Trophies ----------
@@ -726,6 +729,16 @@ function drawScenery(m: MapId): void {
     ctx.fillStyle = "#dfe8ee";
     ctx.fillRect(304, 84, 2, 26); ctx.fillRect(312, 84, 2, 26);
     for (let y = 88; y < 110; y += 5) ctx.fillRect(304, y, 10, 1);
+    // A rubber duck bobbing in the corner
+    const duckY = 118 + Math.sin(t * 2) * 1.2;
+    ctx.fillStyle = "#ffd23f";
+    ctx.beginPath(); ctx.ellipse(150, duckY, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(146, duckY - 4, 3, 2);
+    ctx.fillStyle = "#ff8c1a";
+    ctx.fillRect(155, duckY - 1, 3, 2);
+    ctx.fillStyle = "#101010";
+    ctx.fillRect(152, duckY - 3, 1, 1);
     // Bubbles rising from the sandcastle
     ctx.fillStyle = "rgba(255,255,255,0.7)";
     for (let i = 0; i < 3; i++) ctx.fillRect(280 + i * 3, 150 - ((t * 12 + i * 9) % 20), 1, 1);
@@ -780,6 +793,24 @@ function drawScenery(m: MapId): void {
     ctx.fillStyle = "#ff9ad0";
     ctx.fillRect(150, 70, 2, 2);
     ctx.fillRect(268, 64, 2, 2);
+    // A frog sitting on a lily pad, blinking now and then
+    const frogBlink = (t * 0.3) % 1 < 0.05;
+    ctx.fillStyle = "#4fb842";
+    ctx.fillRect(203, 118, 10, 6);
+    ctx.fillRect(204, 115, 8, 3);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(203, 113, 3, 3);
+    ctx.fillRect(210, 113, 3, 3);
+    ctx.fillStyle = "#101010";
+    if (frogBlink) {
+      ctx.fillRect(204, 114, 2, 1);
+      ctx.fillRect(211, 114, 2, 1);
+    } else {
+      ctx.fillRect(204, 114, 1, 1);
+      ctx.fillRect(211, 114, 1, 1);
+    }
+    ctx.fillStyle = "#2f7a2a";
+    ctx.fillRect(204, 121, 8, 1);
     // Fallen log across the pond
     ctx.fillStyle = "#5a3a1e";
     ctx.beginPath(); ctx.ellipse(200, 100, 36, 4, -0.12, 0, Math.PI * 2); ctx.fill();
@@ -924,7 +955,7 @@ function drawPlay(): void {
     const sp = SPECIES[f.key];
     const asBoot = ev.kind === "boots" && f.key !== "duck" && !f.big;
     const facing = f.vx * flow >= 0 ? 1 : -1;
-    const bobY = ev.kind === "disco" ? Math.sin(clock * 10 + f.phase) * 1.5 : 0;
+    const bobY = (ev.kind === "disco" ? Math.sin(clock * 10 + f.phase) * 1.5 : 0) + Math.sin(clock * 2.2 + f.phase) * 0.8;
     const x = Math.round(f.x);
     const y = Math.round(f.y + bobY);
     ctx.fillStyle = "rgba(0,0,0,0.25)";
