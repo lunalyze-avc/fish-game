@@ -1,5 +1,5 @@
 // Reel Goobers: game loop, input, fish AI, random events, trophies and screens.
-import { SPECIES, paintFish, type Species } from "./sprites";
+import { SPECIES, paintFish, loadAtlas, type Species } from "./sprites";
 import { sfx, startMusic, stopMusic, unlockAudio } from "./audio";
 import { TROPHIES, drawRoom } from "./trophies";
 
@@ -93,6 +93,12 @@ let quip = { text: "", t: 0 };
 let banner = { text: "", t: 0 };
 let toast = { text: "", t: 0 };
 let floaters: { text: string; x: number; y: number; t: number }[] = [];
+interface Particle { x: number; y: number; vx: number; vy: number; t: number; c: string; }
+let particles: Particle[] = [];
+let shakeT = 0;
+let shakeX = 0;
+let shakeY = 0;
+const ZONE = 0.22; // width of the green zone on the reel bar
 let deco: { x: number; y: number; r: number }[] = [];
 let mx = W / 2;
 let my = H / 2;
@@ -137,6 +143,14 @@ const bob = {
   fish: null as Fish | null,
   tension: 0,
   strain: 0,
+  marker: 0.5,
+  markerV: 0,
+  zoneC: 0.5,
+  zoneRetarget: 0,
+  progress: 0,
+  inZone: false,
+  perfect: false,
+  start: { x: 0, y: 0 },
 };
 
 function spawn(key: string): Fish {
@@ -240,6 +254,10 @@ function resetBob(): void {
   bob.ty = ROD.y;
   bob.tension = 0;
   bob.strain = 0;
+  bob.progress = 0;
+  bob.marker = 0.5;
+  bob.markerV = 0;
+  bob.inZone = false;
 }
 
 function cast(): void {
@@ -259,7 +277,7 @@ function cast(): void {
 
 function bite(f: Fish): void {
   bob.state = "bite";
-  bob.biteT = 1.1;
+  bob.biteT = 1.0;
   bob.fish = f;
   f.hooked = true;
   sfx("bite");
@@ -268,12 +286,25 @@ function bite(f: Fish): void {
 function hookFish(): void {
   const f = bob.fish;
   if (!f) return;
+  // The ring shrinks while the fish bites; the closer to the ring's edge you click, the better
+  const radius = 3 + 11 * (bob.biteT / 1.0);
+  bob.perfect = radius < 4.5;
   bob.state = "fight";
-  bob.tension = 0.25;
+  bob.marker = 0.5;
+  bob.markerV = 0;
+  bob.progress = bob.perfect ? 0.12 : 0.04;
   bob.strain = 0;
-  f.bubble = "Hey!";
+  bob.zoneC = 0.5;
+  bob.zoneRetarget = 0;
+  bob.inZone = false;
+  bob.start = { x: f.x, y: f.y };
+  f.hooked = true;
+  f.bubble = bob.perfect ? "PERFECT!" : "Hey!";
   f.bubbleT = 1.2;
-  sfx("hook");
+  burst(bob.x, bob.y, "#ffd23f", 14);
+  shakeT = 0.18;
+  sfx(bob.perfect ? "event" : "hook");
+  if (bob.perfect) floaters.push({ text: "PERFECT!", x: bob.x, y: bob.y - 22, t: 1 });
 }
 
 function catchFish(f: Fish): void {
@@ -287,6 +318,12 @@ function catchFish(f: Fish): void {
   save.catches++;
   if (!save.maps.includes(mapId)) save.maps.push(mapId);
   quip = { text: pick(SPECIES[f.key].quips), t: 2 };
+  burst(f.x, f.y, SPECIES[key].body, 26);
+  shakeT = f.big ? 0.5 : 0.22;
+  if (bob.perfect) {
+    score += 2;
+    floaters.push({ text: "PERFECT +2", x: f.x, y: f.y - 24, t: 1.4 });
+  }
   floaters.push({ text: `+${pts}`, x: f.x, y: f.y - 14, t: 1.2 });
   sfx(f.key === "duck" ? "squeak" : "catch");
   if (f.key === "duck") unlock("catch_me_if_you_can");
@@ -309,30 +346,62 @@ function fightStep(dt: number): void {
     return;
   }
   const sp = SPECIES[f.key];
-  const wave = 0.55 + 0.45 * Math.sin(clock * 2.6 + f.phase);
-  const pull = sp.strength * wave;
-  bob.tension = clamp(bob.tension + dt * (pull * 0.5 + (held ? 0.6 : -0.8)), 0, 1.3);
-  bob.strain = bob.tension >= 1 ? bob.strain + dt : Math.max(0, bob.strain - dt);
+  const weight = sp.strength;
 
-  const dx = bob.x - f.x;
-  const dy = bob.y - f.y;
-  const d = Math.hypot(dx, dy) || 1;
-  const reel = held && bob.tension < 0.95 ? 22 / (f.big ? 1.6 : 1) : 0;
-  const away = sp.strength * 4 * wave;
-  const step = (reel - away) * dt;
-  f.x = clamp(f.x + (dx / d) * step, POND.x0, POND.x1);
-  f.y = clamp(f.y + (dy / d) * step, POND.y0, POND.y1);
+  // The green zone drifts to a new spot now and then. Strong fish move it faster.
+  bob.zoneRetarget -= dt;
+  if (bob.zoneRetarget <= 0) {
+    bob.zoneC = rnd(0.2, 0.8);
+    bob.zoneRetarget = rnd(0.9, 1.6) / (0.6 + weight * 0.5);
+  }
 
-  if (bob.strain > 1.1) {
+  // Holding lifts the marker, releasing lets it fall. The fish kicks it around.
+  bob.markerV += (held ? 3.2 : -2.4) * dt;
+  bob.markerV *= 1 - 2.2 * dt;
+  const kick = Math.sin(clock * (2 + weight) + f.phase) * 0.35 * weight * dt;
+  bob.marker = clamp(bob.marker + bob.markerV * dt + kick, 0, 1);
+  if (bob.marker <= 0 || bob.marker >= 1) bob.markerV = 0;
+
+  const inZone = Math.abs(bob.marker - bob.zoneC) < ZONE / 2;
+  if (inZone && !bob.inZone) {
+    sfx("click");
+    if (f.bubbleT <= 0) {
+      f.bubble = "Ooh!";
+      f.bubbleT = 0.8;
+    }
+  }
+  bob.inZone = inZone;
+
+  if (inZone) {
+    bob.progress += dt * 0.24;
+    bob.strain = Math.max(0, bob.strain - dt * 0.7);
+  } else {
+    bob.progress -= dt * 0.05;
+    bob.strain += dt * (0.45 + 0.25 * weight);
+  }
+  bob.progress = clamp(bob.progress, 0, 1);
+
+  // The fish is reeled in as progress grows, and tugs harder when the line is strained
+  const p = bob.progress;
+  f.x = clamp(lerp(bob.start.x, bob.x, p) + Math.sin(clock * 18) * bob.strain * 2.5, POND.x0, POND.x1);
+  f.y = clamp(lerp(bob.start.y, bob.y, p) + Math.cos(clock * 15) * bob.strain * 1.5, POND.y0, POND.y1);
+  if (bob.strain > 0.7 && f.bubbleT <= 0) {
+    f.bubble = pick(["Let me GO!", "Nooo!", "Ahhh!"]);
+    f.bubbleT = 0.9;
+  }
+
+  if (bob.strain >= 1) {
+    f.hooked = false;
     f.bubble = "Ha! Bye!";
     f.bubbleT = 1.6;
     sfx("escape");
+    shakeT = 0.3;
     unlock("reel_trouble");
     bob.streak = 0;
     resetBob();
     return;
   }
-  if (d < 7) catchFish(f);
+  if (bob.progress >= 1) catchFish(f);
 }
 
 function updateBob(dt: number): void {
@@ -353,6 +422,7 @@ function updateBob(dt: number): void {
         bob.x = bob.tx;
         bob.y = bob.ty;
         sfx("splash");
+        burst(bob.x, bob.y, "#ffffff", 8);
       }
       break;
     }
@@ -363,7 +433,7 @@ function updateBob(dt: number): void {
       bob.y = bob.ty + Math.sin(bob.t * 3) * 0.8;
       for (const f of fishes) {
         if (f.dead || f.hooked || !f.mouthOpen) continue;
-        if (Math.hypot(f.x - bob.x, (f.y - bob.y) * 1.6) < 14 && Math.random() < 1.1 * dt) {
+        if (Math.hypot(f.x - bob.x, (f.y - bob.y) * 1.6) < 14 && Math.random() < 1.3 * dt) {
           bite(f);
           break;
         }
@@ -528,6 +598,7 @@ function update(dt: number): void {
     f.y -= 12 * dt;
   }
   floaters = floaters.filter((f) => f.t > 0);
+  updateParticles(dt);
   if (scene !== "play") return;
 
   if (mode === "tourney") {
@@ -760,6 +831,60 @@ function drawButtons(): void {
   });
 }
 
+function burst(x: number, y: number, color: string, n: number): void {
+  for (let i = 0; i < n; i++) {
+    particles.push({ x, y, vx: rnd(-40, 40), vy: rnd(-70, 10), t: rnd(0.4, 0.9), c: i % 2 ? color : "#ffffff" });
+  }
+}
+
+function updateParticles(dt: number): void {
+  for (const p of particles) {
+    p.t -= dt;
+    p.vy += 120 * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+  particles = particles.filter((p) => p.t > 0);
+  if (shakeT > 0) {
+    shakeT -= dt;
+    shakeX = rnd(-1.5, 1.5) * Math.max(0, shakeT);
+    shakeY = rnd(-1.5, 1.5) * Math.max(0, shakeT);
+  } else {
+    shakeX = 0;
+    shakeY = 0;
+  }
+}
+
+function drawParticles(): void {
+  for (const p of particles) {
+    ctx.fillStyle = p.c;
+    ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
+  }
+}
+
+// The reel bar: green zone, yellow marker, and a catch meter beside it
+function drawReelPanel(): void {
+  const top = 40;
+  const h = 120;
+  const x = 286;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(x - 3, top - 3, 30, h + 6);
+  const zTop = top + h - (bob.zoneC + ZONE / 2) * h;
+  ctx.fillStyle = bob.inZone ? "#7dff7d" : "#2f8f3f";
+  ctx.fillRect(x, zTop, 10, ZONE * h);
+  ctx.fillStyle = "#ffd23f";
+  ctx.fillRect(x - 2, top + h - bob.marker * h - 1, 14, 2);
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(x + 16, top, 5, h);
+  ctx.fillStyle = "#7fe0ff";
+  ctx.fillRect(x + 16, top + h - bob.progress * h, 5, bob.progress * h);
+  if (bob.strain > 0.5) {
+    ctx.fillStyle = `rgba(255,60,60,${0.25 + 0.25 * Math.sin(clock * 20)})`;
+    ctx.fillRect(x - 3, top - 3, 30, h + 6);
+  }
+  txt("REEL", x - 2, top - 9, "#ffffff", 8);
+}
+
 function drawPlay(): void {
   const m = MAPS[mapId];
   drawBank(m);
@@ -802,6 +927,18 @@ function drawPlay(): void {
   // Floating points
   for (const p of floaters) txt(p.text, p.x, p.y, "#ffd23f", 8, "center");
 
+  // Strike ring: shrinks toward the bobber, click when it's thin for a PERFECT
+  if (bob.state === "bite") {
+    const radius = 3 + 11 * (bob.biteT / 1.0);
+    ctx.strokeStyle = radius < 4.5 ? "#ffd23f" : "#ff4d4d";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(bob.x, bob.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  drawParticles();
+
   // Bite prompt
   if (bob.state === "bite" && Math.floor(clock * 6) % 2 === 0) {
     txt("!", bob.x, bob.y - 16, "#ff4d4d", 16, "center");
@@ -816,16 +953,7 @@ function drawPlay(): void {
     ctx.fillRect(111, 27, 98 * bob.charge, 3);
   }
 
-  // Tension meter while fighting
-  if (bob.state === "fight") {
-    const tension = clamp(bob.tension, 0, 1);
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(298, 44, 8, 118);
-    const color = bob.tension < 0.8 ? "#5fd35f" : bob.tension < 1 ? "#ffd23f" : "#ff4d4d";
-    ctx.fillStyle = color;
-    ctx.fillRect(299, 161 - tension * 116, 6, tension * 116);
-    txt("LINE", 302, 38, "#ffffff", 8, "center");
-  }
+  if (bob.state === "fight") drawReelPanel();
 
   drawHud();
 }
@@ -840,7 +968,11 @@ function drawHud(): void {
   }
   txt(MAPS[mapId].label, W - 6, 18, "#ffffff", 8, "right");
 
-  txt(bob.state === "idle" ? "CLICK + HOLD TO CAST" : bob.state === "fight" ? "HOLD TO REEL, RELEASE TO EASE" : "", 6, 174, "#ffffff", 8);
+  const hint =
+    bob.state === "idle" ? "CLICK + HOLD TO CAST" :
+    bob.state === "bite" ? "CLICK THE RING!" :
+    bob.state === "fight" ? "HOLD TO LIFT, KEEP IT IN GREEN" : "";
+  txt(hint, 6, 174, "#ffffff", 8);
 
   if (banner.t > 0) {
     const flash = Math.floor(clock * 6) % 2 === 0 ? "#ffd23f" : "#ff6b6b";
@@ -889,12 +1021,13 @@ function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   update(dt);
-  ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+  ctx.setTransform(SCALE, 0, 0, SCALE, shakeX * SCALE, shakeY * SCALE);
   drawFrame();
   requestAnimationFrame(frame);
 }
 
 // Ask the browser to load the pixel fonts; the loop redraws with them as soon as they arrive.
 void document.fonts?.load(`8px ${FONT}`);
+loadAtlas("assets/pixelfishes.png");
 setScene("title");
 requestAnimationFrame(frame);
