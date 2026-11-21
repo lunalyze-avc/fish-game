@@ -6,7 +6,7 @@ import { TROPHIES, drawRoom } from "./trophies";
 const W = 320;
 const H = 180;
 const POND = { x0: 8, x1: 312, y0: 36, y1: 168 };
-const ROD = { x: 160, y: 20 };
+const ROD = { x: 34, y: 164 }; // the player stands at the bottom left
 const SAVE_KEY = "reelgoobers.v1";
 // The 320x180 game is drawn at 6x into a 1920x1080 canvas, so pixels stay chunky and text stays legible.
 const SCALE = 6;
@@ -29,7 +29,7 @@ interface MapDef {
 }
 
 const MAPS: Record<MapId, MapDef> = {
-  kiddie: { label: "KIDDIE POOL", top: "#7fe0ff", bottom: "#1b7fb4", bank: "#f2d28a", keys: ["bubbles", "splashington", "doug", "nugget"], tempo: 150, notes: [523, 659, 784, 659, 698, 784, 880, 784], bass: [131, 131, 147, 147] },
+  kiddie: { label: "KIDDIE POOL", top: "#5ff0ff", bottom: "#1cb3ee", bank: "#fbfaf4", keys: ["bubbles", "splashington", "doug", "nugget"], tempo: 150, notes: [523, 659, 784, 659, 698, 784, 880, 784], bass: [131, 131, 147, 147] },
   sewer: { label: "SEWER", top: "#6fa35a", bottom: "#24402e", bank: "#5b5f58", keys: ["flops", "gary", "steve", "dee"], tempo: 112, notes: [392, 466, 523, 466, 392, 349, 392, 466], bass: [98, 98, 116, 116] },
   swamp: { label: "SWAMP", top: "#8c8a3e", bottom: "#33361a", bank: "#4a3c24", keys: ["marv", "gloopy", "bogfin", "tina", "zorp", "glarb"], tempo: 92, notes: [440, 523, 587, 523, 440, 392, 440, 494], bass: [110, 110, 147, 131] },
 };
@@ -151,6 +151,8 @@ const bob = {
   inZone: false,
   perfect: false,
   start: { x: 0, y: 0 },
+  beatT: 0,
+  hitThisBeat: false,
 };
 
 function spawn(key: string): Fish {
@@ -261,20 +263,15 @@ function resetBob(): void {
 }
 
 function cast(): void {
-  const power = clamp(bob.charge, 0, 1);
-  const dxm = mx - ROD.x;
-  const dym = my - ROD.y;
-  const len = Math.hypot(dxm, dym) || 1;
-  const reach = Math.min(len, 60 + power * 150);
+  // The bobber goes exactly where you clicked, anywhere on the pond
   bob.sx = bob.x;
   bob.sy = bob.y;
-  bob.tx = clamp(ROD.x + (dxm / len) * reach, POND.x0 + 6, POND.x1 - 6);
-  bob.ty = clamp(ROD.y + (dym / len) * reach, POND.y0 + 6, POND.y1 - 6);
+  bob.tx = clamp(mx, POND.x0 + 6, POND.x1 - 6);
+  bob.ty = clamp(my, POND.y0 + 6, POND.y1 - 6);
   bob.flyT = 0;
   bob.state = "fly";
   sfx("cast");
 }
-
 function bite(f: Fish): void {
   bob.state = "bite";
   bob.biteT = 1.0;
@@ -286,17 +283,14 @@ function bite(f: Fish): void {
 function hookFish(): void {
   const f = bob.fish;
   if (!f) return;
-  // The ring shrinks while the fish bites; the closer to the ring's edge you click, the better
+  // The ring shrinks while the fish bites; clicking it thin is a PERFECT strike
   const radius = 3 + 11 * (bob.biteT / 1.0);
   bob.perfect = radius < 4.5;
   bob.state = "fight";
-  bob.marker = 0.5;
-  bob.markerV = 0;
-  bob.progress = bob.perfect ? 0.12 : 0.04;
+  bob.progress = bob.perfect ? 0.1 : 0.04;
   bob.strain = 0;
-  bob.zoneC = 0.5;
-  bob.zoneRetarget = 0;
-  bob.inZone = false;
+  bob.beatT = 0;
+  bob.hitThisBeat = false;
   bob.start = { x: f.x, y: f.y };
   f.hooked = true;
   f.bubble = bob.perfect ? "PERFECT!" : "Hey!";
@@ -339,6 +333,11 @@ function catchFish(f: Fish): void {
   if (!f.big && f.key !== "duck") fishes.push(spawn(pick(MAPS[mapId].keys)));
 }
 
+// Pump mini game: a ring shrinks toward the bobber once per beat.
+// Click when it lines up with the bobber to pull the fish in; click early or late and it dashes away.
+const PUMP_AT = 0.85;   // where the ring lines up with the bobber, as a fraction of the beat
+const PUMP_WIN = 0.12;  // how close to PUMP_AT counts as a hit
+
 function fightStep(dt: number): void {
   const f = bob.fish;
   if (!f) {
@@ -346,62 +345,56 @@ function fightStep(dt: number): void {
     return;
   }
   const sp = SPECIES[f.key];
-  const weight = sp.strength;
-
-  // The green zone drifts to a new spot now and then. Strong fish move it faster.
-  bob.zoneRetarget -= dt;
-  if (bob.zoneRetarget <= 0) {
-    bob.zoneC = rnd(0.2, 0.8);
-    bob.zoneRetarget = rnd(0.9, 1.6) / (0.6 + weight * 0.5);
+  const beat = 0.9 + 0.1 * sp.strength; // stronger fish make a slower beat
+  bob.beatT += dt / beat;
+  if (bob.beatT >= 1) {
+    bob.beatT -= 1;
+    if (!bob.hitThisBeat) missPump(f);
+    bob.hitThisBeat = false;
   }
-
-  // Holding lifts the marker, releasing lets it fall. The fish kicks it around.
-  bob.markerV += (held ? 3.2 : -2.4) * dt;
-  bob.markerV *= 1 - 2.2 * dt;
-  const kick = Math.sin(clock * (2 + weight) + f.phase) * 0.35 * weight * dt;
-  bob.marker = clamp(bob.marker + bob.markerV * dt + kick, 0, 1);
-  if (bob.marker <= 0 || bob.marker >= 1) bob.markerV = 0;
-
-  const inZone = Math.abs(bob.marker - bob.zoneC) < ZONE / 2;
-  if (inZone && !bob.inZone) {
-    sfx("click");
-    if (f.bubbleT <= 0) {
-      f.bubble = "Ooh!";
-      f.bubbleT = 0.8;
-    }
-  }
-  bob.inZone = inZone;
-
-  if (inZone) {
-    bob.progress += dt * 0.24;
-    bob.strain = Math.max(0, bob.strain - dt * 0.7);
-  } else {
-    bob.progress -= dt * 0.05;
-    bob.strain += dt * (0.45 + 0.25 * weight);
-  }
+  // Keep the fish drifting between pumps
+  f.x = clamp(lerp(bob.start.x, bob.x, bob.progress) + Math.sin(clock * 3 + f.phase) * 2, POND.x0, POND.x1);
+  f.y = clamp(lerp(bob.start.y, bob.y, bob.progress) + Math.cos(clock * 2 + f.phase) * 1.5, POND.y0, POND.y1);
   bob.progress = clamp(bob.progress, 0, 1);
+  if (bob.progress >= 1) catchFish(f);
+}
 
-  // The fish is reeled in as progress grows, and tugs harder when the line is strained
-  const p = bob.progress;
-  f.x = clamp(lerp(bob.start.x, bob.x, p) + Math.sin(clock * 18) * bob.strain * 2.5, POND.x0, POND.x1);
-  f.y = clamp(lerp(bob.start.y, bob.y, p) + Math.cos(clock * 15) * bob.strain * 1.5, POND.y0, POND.y1);
-  if (bob.strain > 0.7 && f.bubbleT <= 0) {
-    f.bubble = pick(["Let me GO!", "Nooo!", "Ahhh!"]);
-    f.bubbleT = 0.9;
+function pump(): void {
+  const f = bob.fish;
+  if (!f || bob.state !== "fight" || bob.hitThisBeat) return;
+  bob.hitThisBeat = true;
+  const off = Math.abs(bob.beatT - PUMP_AT);
+  if (off <= PUMP_WIN) {
+    const sp = SPECIES[f.key];
+    const perfect = off < 0.035;
+    bob.progress += (perfect ? 0.26 : 0.2) / (0.6 + 0.4 * sp.strength);
+    bob.strain = Math.max(0, bob.strain - 0.2);
+    f.bubble = perfect ? "PERFECT!" : pick(["Ugh!", "Hey!", "Hup!"]);
+    f.bubbleT = 0.8;
+    if (perfect) floaters.push({ text: "PERFECT", x: bob.x, y: bob.y - 20, t: 0.8 });
+    burst(bob.x, bob.y, perfect ? "#ffd23f" : "#7fe0ff", 8);
+    sfx(perfect ? "event" : "click");
+  } else {
+    missPump(f);
   }
+}
 
+function missPump(f: Fish): void {
+  bob.strain += 0.34;
+  f.x = clamp(f.x + (Math.random() < 0.5 ? -1 : 1) * 8, POND.x0, POND.x1);
+  f.bubble = pick(["Nope!", "Nah!", "Whoa!"]);
+  f.bubbleT = 0.9;
+  sfx("miss");
+  shakeT = 0.12;
   if (bob.strain >= 1) {
     f.hooked = false;
     f.bubble = "Ha! Bye!";
     f.bubbleT = 1.6;
     sfx("escape");
-    shakeT = 0.3;
     unlock("reel_trouble");
     bob.streak = 0;
     resetBob();
-    return;
   }
-  if (bob.progress >= 1) catchFish(f);
 }
 
 function updateBob(dt: number): void {
@@ -575,6 +568,8 @@ canvas.addEventListener("pointerdown", (e) => {
     bob.charge = 0;
   } else if (bob.state === "bite") {
     hookFish();
+  } else if (bob.state === "fight") {
+    pump();
   }
 });
 window.addEventListener("pointerup", () => {
@@ -654,10 +649,14 @@ function drawBank(m: MapDef): void {
   ctx.fillRect(0, POND.y1, W, H - POND.y1);
   const id = mapKey(m);
   if (id === "kiddie") {
-    // Sand speckles and a little pebble path
-    ctx.fillStyle = "#e6bd6c";
-    for (let i = 0; i < 60; i++) ctx.fillRect((i * 97) % W, (i * 41) % POND.y0, 1, 1);
-    for (let i = 0; i < 40; i++) ctx.fillRect((i * 53 + 7) % W, POND.y1 + ((i * 29) % (H - POND.y1)), 1, 1);
+    // Pool deck: white tiles with light-blue grout
+    ctx.fillStyle = "#9fdcf2";
+    for (let x = 0; x < W; x += 12) ctx.fillRect(x, 0, 1, POND.y0);
+    for (let y = 0; y < POND.y0; y += 12) ctx.fillRect(0, y, W, 1);
+    for (let x = 0; x < W; x += 12) ctx.fillRect(x, POND.y1, 1, H - POND.y1);
+    for (let y = POND.y1; y < H; y += 12) ctx.fillRect(0, y, W, 1);
+    ctx.fillStyle = "#ffffff";
+    for (let x = 0; x < W; x += 12) for (let y = 2; y < POND.y0; y += 12) ctx.fillRect(x + 2, y, 8, 8);
   } else if (id === "sewer") {
     // Concrete slabs with grime seams
     ctx.fillStyle = "#4a4e48";
@@ -682,11 +681,25 @@ function mapKey(m: MapDef): MapId {
 function drawScenery(m: MapId): void {
   const t = clock;
   if (m === "kiddie") {
-    // Tiled pool edge
-    for (let x = POND.x0; x < POND.x1; x += 6) {
-      ctx.fillStyle = (x / 6) % 2 === 0 ? "#ffffff" : "#8fe3ff";
-      ctx.fillRect(x, POND.y0, 6, 3);
-      ctx.fillRect(x, POND.y1 - 3, 6, 3);
+    // Tiled rim all the way round, so the water reads as an enclosed pool
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(POND.x0 - 4, POND.y0 - 4, POND.x1 - POND.x0 + 8, 4);
+    ctx.fillRect(POND.x0 - 4, POND.y1, POND.x1 - POND.x0 + 8, 4);
+    ctx.fillRect(POND.x0 - 4, POND.y0, 4, POND.y1 - POND.y0);
+    ctx.fillRect(POND.x1, POND.y0, 4, POND.y1 - POND.y0);
+    for (let x = POND.x0 - 4; x < POND.x1 + 4; x += 6) {
+      ctx.fillStyle = (x / 6) % 2 === 0 ? "#2aa8e0" : "#9fe6ff";
+      ctx.fillRect(x, POND.y0 - 4, 3, 2);
+      ctx.fillRect(x, POND.y1 + 2, 3, 2);
+    }
+    // Lane ropes of floating buoys, the classic pool look
+    for (const ly of [84, 124]) {
+      for (let x = POND.x0 + 4; x < POND.x1 - 4; x += 8) {
+        ctx.fillStyle = (x / 8) % 2 === 0 ? "#ff4d4d" : "#ffffff";
+        ctx.fillRect(x, ly, 5, 3);
+      }
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.fillRect(POND.x0 + 4, ly + 1, POND.x1 - POND.x0 - 8, 1);
     }
     // Rubber ring float with a highlight
     ctx.fillStyle = "#ff5c8a";
@@ -863,26 +876,22 @@ function drawParticles(): void {
 }
 
 // The reel bar: green zone, yellow marker, and a catch meter beside it
+// Pump meter: blue fills with each hit, red builds with each miss
 function drawReelPanel(): void {
   const top = 40;
   const h = 120;
   const x = 286;
   ctx.fillStyle = "rgba(0,0,0,0.6)";
   ctx.fillRect(x - 3, top - 3, 30, h + 6);
-  const zTop = top + h - (bob.zoneC + ZONE / 2) * h;
-  ctx.fillStyle = bob.inZone ? "#7dff7d" : "#2f8f3f";
-  ctx.fillRect(x, zTop, 10, ZONE * h);
-  ctx.fillStyle = "#ffd23f";
-  ctx.fillRect(x - 2, top + h - bob.marker * h - 1, 14, 2);
   ctx.fillStyle = "#000000";
-  ctx.fillRect(x + 16, top, 5, h);
+  ctx.fillRect(x, top, 6, h);
   ctx.fillStyle = "#7fe0ff";
-  ctx.fillRect(x + 16, top + h - bob.progress * h, 5, bob.progress * h);
-  if (bob.strain > 0.5) {
-    ctx.fillStyle = `rgba(255,60,60,${0.25 + 0.25 * Math.sin(clock * 20)})`;
-    ctx.fillRect(x - 3, top - 3, 30, h + 6);
-  }
-  txt("REEL", x - 2, top - 9, "#ffffff", 8);
+  ctx.fillRect(x, top + h - bob.progress * h, 6, bob.progress * h);
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(x + 12, top, 6, h);
+  ctx.fillStyle = "#ff5c5c";
+  ctx.fillRect(x + 12, top + h - bob.strain * h, 6, bob.strain * h);
+  txt("FISH", x - 2, top - 9, "#ffffff", 8);
 }
 
 function drawPlay(): void {
@@ -894,8 +903,8 @@ function drawPlay(): void {
   ctx.strokeStyle = "#e8e8e8";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(ROD.x, ROD.y);
-  ctx.lineTo(34, 172);
+  ctx.moveTo(ROD.x - 16, ROD.y + 12);
+  ctx.lineTo(ROD.x, ROD.y);
   ctx.stroke();
   if (bob.state !== "idle" && bob.state !== "charging") {
     ctx.strokeStyle = "rgba(255,255,255,0.7)";
@@ -926,6 +935,21 @@ function drawPlay(): void {
 
   // Floating points
   for (const p of floaters) txt(p.text, p.x, p.y, "#ffd23f", 8, "center");
+
+  // Pump ring: shrinks onto the bobber, click when it lines up
+  if (bob.state === "fight") {
+    const r = Math.max(4, 4 + 14 * (1 - bob.beatT / PUMP_AT));
+    const inWindow = Math.abs(bob.beatT - PUMP_AT) <= PUMP_WIN;
+    ctx.strokeStyle = inWindow ? "#7dff7d" : "#ffffff";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(bob.x, bob.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "#ffd23f";
+    ctx.beginPath();
+    ctx.arc(bob.x, bob.y, 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   // Strike ring: shrinks toward the bobber, click when it's thin for a PERFECT
   if (bob.state === "bite") {
@@ -971,7 +995,7 @@ function drawHud(): void {
   const hint =
     bob.state === "idle" ? "CLICK + HOLD TO CAST" :
     bob.state === "bite" ? "CLICK THE RING!" :
-    bob.state === "fight" ? "HOLD TO LIFT, KEEP IT IN GREEN" : "";
+    bob.state === "fight" ? "CLICK WHEN THE RING HITS THE BOBBER" : "";
   txt(hint, 6, 174, "#ffffff", 8);
 
   if (banner.t > 0) {
@@ -988,6 +1012,23 @@ function drawHud(): void {
   }
 }
 
+// Title with a colour-cycling fill and a dark outline so it reads on any background
+function rainbowTitle(text: string, cx: number, y: number, size: number): void {
+  ctx.font = `${size}px ${FONT}`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const chars = [...text];
+  const widths = chars.map((c) => ctx.measureText(c).width);
+  let x = cx - widths.reduce((a, b) => a + b, 0) / 2;
+  chars.forEach((c, i) => {
+    ctx.fillStyle = "#1a0a2e";
+    for (const [dx, dy] of [[-2, 0], [2, 0], [0, -2], [0, 2], [2, 2]]) ctx.fillText(c, x + dx, y + 2 + dy);
+    ctx.fillStyle = `hsl(${(i * 35 + clock * 90) % 360}, 100%, 62%)`;
+    ctx.fillText(c, x, y + 2);
+    x += widths[i];
+  });
+}
+
 function drawFrame(): void {
   if (scene === "room") {
     drawRoom(ctx, new Set(save.trophies), clock);
@@ -1002,7 +1043,7 @@ function drawFrame(): void {
   drawBank(MAPS.kiddie);
   drawWater("kiddie");
   if (scene === "title") {
-    txt("REEL GOOBERS", W / 2, 20, "#ffd23f", 20, "center");
+    rainbowTitle("REEL GOOBERS", W / 2, 20, 20);
     txt("a pixel fishing game", W / 2, 34, "#ffffff", 8, "center");
     drawButtons();
     txt(`BEST TOURNEY: ${save.best}   TROPHIES: ${save.trophies.length}/${TROPHIES.length}`, W / 2, 168, "#ffffff", 8, "center");
