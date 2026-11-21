@@ -577,9 +577,143 @@ function speech(x: number, y: number, s: string): void {
 }
 
 function drawBank(m: MapDef): void {
+  // Banks: each map has its own ground around the pond
   ctx.fillStyle = m.bank;
   ctx.fillRect(0, 0, W, POND.y0);
   ctx.fillRect(0, POND.y1, W, H - POND.y1);
+  const id = mapKey(m);
+  if (id === "kiddie") {
+    // Sand speckles and a little pebble path
+    ctx.fillStyle = "#e6bd6c";
+    for (let i = 0; i < 60; i++) ctx.fillRect((i * 97) % W, (i * 41) % POND.y0, 1, 1);
+    for (let i = 0; i < 40; i++) ctx.fillRect((i * 53 + 7) % W, POND.y1 + ((i * 29) % (H - POND.y1)), 1, 1);
+  } else if (id === "sewer") {
+    // Concrete slabs with grime seams
+    ctx.fillStyle = "#4a4e48";
+    for (let x = 0; x < W; x += 32) ctx.fillRect(x, 0, 1, POND.y0);
+    for (let y = 0; y < POND.y0; y += 12) ctx.fillRect(0, y, W, 1);
+    ctx.fillStyle = "rgba(90,140,70,0.35)";
+    for (let i = 0; i < 12; i++) ctx.fillRect((i * 71) % W, (i * 23) % POND.y0, 14, 3);
+  } else {
+    // Mud with clumps of grass
+    ctx.fillStyle = "#3a2e1a";
+    for (let i = 0; i < 40; i++) ctx.fillRect((i * 89) % W, (i * 13) % POND.y0, 3, 2);
+    ctx.fillStyle = "#4f7a2e";
+    for (let i = 0; i < 14; i++) ctx.fillRect((i * 97 + 20) % W, POND.y1 + 4 + ((i * 7) % 8), 4, 3);
+  }
+}
+
+function mapKey(m: MapDef): MapId {
+  return (Object.keys(MAPS) as MapId[]).find((k) => MAPS[k] === m) ?? "kiddie";
+}
+
+// Scenery drawn on the water, under the fish
+function drawScenery(m: MapId): void {
+  const t = clock;
+  if (m === "kiddie") {
+    // Tiled pool edge
+    for (let x = POND.x0; x < POND.x1; x += 6) {
+      ctx.fillStyle = (x / 6) % 2 === 0 ? "#ffffff" : "#8fe3ff";
+      ctx.fillRect(x, POND.y0, 6, 3);
+      ctx.fillRect(x, POND.y1 - 3, 6, 3);
+    }
+    // Rubber ring float with a highlight
+    ctx.fillStyle = "#ff5c8a";
+    ctx.beginPath(); ctx.ellipse(60, 66, 11, 8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#7fe3ff";
+    ctx.beginPath(); ctx.ellipse(60, 66, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd0e0";
+    ctx.fillRect(52, 61, 3, 1);
+    // Toy boat
+    const bx = 250 + Math.sin(t * 0.7) * 2;
+    ctx.fillStyle = "#e33b3b";
+    ctx.beginPath(); ctx.moveTo(bx - 12, 58); ctx.lineTo(bx + 12, 58); ctx.lineTo(bx + 9, 66); ctx.lineTo(bx - 9, 66); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(Math.round(bx - 12), 56, 24, 2);
+    ctx.fillStyle = "#c08a4a";
+    ctx.fillRect(Math.round(bx) - 1, 42, 2, 14);
+    ctx.fillStyle = "#ffd23f";
+    ctx.fillRect(Math.round(bx) + 1, 43, 6, 4);
+    // Beach ball
+    ctx.fillStyle = "#ff5c8a"; ctx.beginPath(); ctx.arc(120, 150, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd23f"; ctx.fillRect(114, 148, 4, 2);
+    ctx.fillStyle = "#7fe3ff"; ctx.fillRect(122, 145, 3, 2);
+    // Pool ladder on the right edge
+    ctx.fillStyle = "#dfe8ee";
+    ctx.fillRect(304, 84, 2, 26); ctx.fillRect(312, 84, 2, 26);
+    for (let y = 88; y < 110; y += 5) ctx.fillRect(304, y, 10, 1);
+    // Bubbles rising from the sandcastle
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    for (let i = 0; i < 3; i++) ctx.fillRect(280 + i * 3, 150 - ((t * 12 + i * 9) % 20), 1, 1);
+    // Sandcastle
+    ctx.fillStyle = "#f6d07a";
+    ctx.fillRect(264, 150, 26, 12);
+    ctx.fillRect(268, 143, 18, 7);
+    ctx.fillRect(272, 139, 10, 4);
+    ctx.fillStyle = "#b8862c";
+    ctx.fillRect(264, 161, 26, 1);
+    ctx.fillStyle = "#ff5c8a"; ctx.fillRect(276, 134, 1, 5); ctx.fillRect(277, 134, 3, 2);
+  } else if (m === "sewer") {
+    // Grates sunk in the water
+    ctx.fillStyle = "#1a1f1a";
+    ctx.fillRect(22, 140, 30, 22);
+    ctx.fillRect(250, 116, 36, 24);
+    ctx.fillStyle = "#4a5a4a";
+    for (let x = 24; x < 52; x += 4) ctx.fillRect(x, 141, 1, 20);
+    for (let y = 142; y < 162; y += 4) ctx.fillRect(23, y, 28, 1);
+    for (let x = 252; x < 286; x += 4) ctx.fillRect(x, 117, 1, 22);
+    for (let y = 118; y < 140; y += 4) ctx.fillRect(251, y, 34, 1);
+    // Pipe outlets in the bank, dripping slime
+    for (const px of [72, 210]) {
+      ctx.fillStyle = "#2b2f2b";
+      ctx.fillRect(px, 0, 22, 18);
+      ctx.fillStyle = "#555b55";
+      ctx.fillRect(px - 2, 14, 26, 4);
+      ctx.fillStyle = "#6fdc4a";
+      ctx.fillRect(px + 9, 18 + ((t * 10) % 8), 3, 3);
+    }
+    // Slime pools
+    for (const [x, y, r] of [[120, 74, 9], [190, 150, 7]] as const) {
+      ctx.fillStyle = "rgba(111,220,74,0.55)";
+      ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(200,255,160,0.6)";
+      ctx.fillRect(x - r * 0.4, y - 1, 3, 1);
+    }
+    // Trash drifting slowly
+    const drift = (k: number, base: number) => ((base + t * (5 + k)) % (POND.x1 - POND.x0)) + POND.x0;
+    ctx.fillStyle = "#3a7a3a"; ctx.fillRect(Math.round(drift(1, 40)), 96, 3, 6);   // bottle
+    ctx.fillStyle = "#c8c8d0"; ctx.fillRect(Math.round(drift(2, 180)), 60, 4, 3);  // can
+    ctx.fillStyle = "#e0d060"; ctx.fillRect(Math.round(drift(3, 260)), 130, 3, 2); // wrapper
+  } else {
+    // Lily pads with notches and flowers
+    const pads: [number, number, number][] = [[46, 58, 9], [96, 120, 8], [150, 72, 7], [206, 124, 10], [270, 66, 8], [236, 150, 6]];
+    for (const [x, y, r] of pads) {
+      ctx.fillStyle = "#3f8a3a";
+      ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.6, 0, 0.2, Math.PI * 2 - 0.2); ctx.fill();
+      ctx.fillStyle = "#5fae4f";
+      ctx.beginPath(); ctx.ellipse(x - 1, y - 1, r * 0.5, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = "#ff9ad0";
+    ctx.fillRect(150, 70, 2, 2);
+    ctx.fillRect(268, 64, 2, 2);
+    // Fallen log across the pond
+    ctx.fillStyle = "#5a3a1e";
+    ctx.beginPath(); ctx.ellipse(200, 100, 36, 4, -0.12, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#7a5230";
+    ctx.beginPath(); ctx.ellipse(200, 99, 34, 2.5, -0.12, 0, Math.PI * 2); ctx.fill();
+    // Reeds on the left and right edges
+    for (let i = 0; i < 9; i++) {
+      const rx = i < 5 ? POND.x0 + 2 + i * 3 : POND.x1 - 2 - (i - 5) * 3;
+      const top = POND.y0 + 10 + ((i * 17) % 40);
+      ctx.fillStyle = "#4d7a2a";
+      ctx.fillRect(rx, top, 1, POND.y1 - top);
+      ctx.fillStyle = "#6b4a22";
+      ctx.fillRect(rx - 1, top - 3, 3, 4);
+    }
+    // Mud bubbles
+    ctx.fillStyle = "rgba(220,230,180,0.5)";
+    for (let i = 0; i < 4; i++) ctx.fillRect(60 + i * 70, POND.y1 - 6 - ((t * 9 + i * 13) % 30), 2, 2);
+  }
 }
 
 function drawWater(m: MapId): void {
@@ -601,33 +735,7 @@ function drawWater(m: MapId): void {
     ctx.fillRect(Math.round(x), Math.round(y), 6, 1);
   }
 
-  // Map decorations
-  if (m === "kiddie") {
-    ctx.strokeStyle = "#ff5c8a";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(60, 66, 8, 5, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = "#f6d07a";
-    ctx.fillRect(266, 150, 22, 10);
-    ctx.fillRect(270, 144, 14, 6);
-    ctx.fillRect(274, 140, 6, 4);
-  } else if (m === "sewer") {
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    for (let x = 24; x < 52; x += 4) ctx.fillRect(x, 146, 1, 16);
-    for (let y = 146; y < 162; y += 4) ctx.fillRect(24, y, 28, 1);
-    for (const p of deco) {
-      ctx.fillStyle = "#c9b458";
-      ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
-    }
-  } else if (m === "swamp") {
-    for (const p of deco) {
-      ctx.fillStyle = "#3f8a3a";
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y, p.r, p.r * 0.6, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
+  drawScenery(m);
 
   if (disco) {
     ctx.fillStyle = `hsla(${hue},100%,70%,0.14)`;
