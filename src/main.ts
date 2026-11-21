@@ -155,7 +155,6 @@ const bob = {
   start: { x: 0, y: 0 },
   beatT: 0,
   hitThisBeat: false,
-  dist: 0,
 };
 
 function spawn(key: string): Fish {
@@ -329,7 +328,6 @@ function hookFish(): void {
   bob.strain = 0;
   bob.beatT = 0;
   bob.hitThisBeat = false;
-  bob.dist = Math.hypot(bob.x - f.x, bob.y - f.y);
   bob.start = { x: f.x, y: f.y };
   f.hooked = true;
   f.bubble = bob.perfect ? "PERFECT!" : "Hey!";
@@ -377,8 +375,6 @@ function catchFish(f: Fish): void {
 const PUMP_AT = 0.85;   // where the ring lines up with the bobber, as a fraction of the beat
 const PUMP_WIN = 0.12;  // how close to PUMP_AT counts as a hit
 
-// Reel: hold to pull the fish toward you. Let go and it runs away.
-// Reel it within reach to catch it. If it gets too far away, it gets off the line.
 function fightStep(dt: number): void {
   const f = bob.fish;
   if (!f) {
@@ -386,37 +382,18 @@ function fightStep(dt: number): void {
     return;
   }
   const sp = SPECIES[f.key];
-  const dx = bob.x - f.x;
-  const dy = bob.y - f.y;
-  const d = Math.hypot(dx, dy) || 0.001;
-  const ux = dx / d;
-  const uy = dy / d;
-  const pull = f.big ? 30 : 26;
-  const run = sp.strength * 12;
-  const step = held ? pull : -run;
-  const wiggle = Math.sin(clock * 6 + f.phase) * 10; // fish wriggles sideways
-  const nf = clampPond(f.x + ux * step * dt - uy * wiggle * dt, f.y + uy * step * dt + ux * wiggle * dt, 4);
-  f.x = nf.x;
-  f.y = nf.y;
-  bob.dist = d;
-
-  if (!held && f.bubbleT <= 0 && Math.random() < dt * 0.6) {
-    f.bubble = pick(["Let me GO!", "Nope!", "Wheee!"]);
-    f.bubbleT = 0.9;
+  const beat = 0.9 + 0.1 * sp.strength; // stronger fish make a slower beat
+  bob.beatT += dt / beat;
+  if (bob.beatT >= 1) {
+    bob.beatT -= 1;
+    if (!bob.hitThisBeat) missPump(f);
+    bob.hitThisBeat = false;
   }
-  if (d < 8) {
-    catchFish(f);
-    return;
-  }
-  if (d > 110) {
-    f.hooked = false;
-    f.bubble = "Ha! Bye!";
-    f.bubbleT = 1.6;
-    sfx("escape");
-    unlock("reel_trouble");
-    bob.streak = 0;
-    resetBob();
-  }
+  // Keep the fish drifting between pumps
+  f.x = clamp(lerp(bob.start.x, bob.x, bob.progress) + Math.sin(clock * 3 + f.phase) * 2, POND.x0, POND.x1);
+  f.y = clamp(lerp(bob.start.y, bob.y, bob.progress) + Math.cos(clock * 2 + f.phase) * 1.5, POND.y0, POND.y1);
+  bob.progress = clamp(bob.progress, 0, 1);
+  if (bob.progress >= 1) catchFish(f);
 }
 
 function pump(): void {
@@ -633,6 +610,8 @@ canvas.addEventListener("pointerdown", (e) => {
     bob.charge = 0;
   } else if (bob.state === "bite") {
     hookFish();
+  } else if (bob.state === "fight") {
+    pump();
   }
 });
 window.addEventListener("pointerup", () => {
@@ -987,11 +966,21 @@ function drawParticles(): void {
 
 // The reel bar: green zone, yellow marker, and a catch meter beside it
 // Pump meter: blue fills with each hit, red builds with each miss
-// Distance readout while reeling
 function drawReelPanel(): void {
-  const away = Math.round(bob.dist);
-  const color = away < 40 ? "#7dff7d" : away < 80 ? "#ffd23f" : "#ff5c5c";
-  txt(`FISH ${away} PX AWAY`, W / 2, 30, color, 8, "center");
+  const top = 40;
+  const h = 120;
+  const x = 286;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(x - 3, top - 3, 30, h + 6);
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(x, top, 6, h);
+  ctx.fillStyle = "#7fe0ff";
+  ctx.fillRect(x, top + h - bob.progress * h, 6, bob.progress * h);
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(x + 12, top, 6, h);
+  ctx.fillStyle = "#ff5c5c";
+  ctx.fillRect(x + 12, top + h - bob.strain * h, 6, bob.strain * h);
+  txt("FISH", x - 2, top - 9, "#ffffff", 8);
 }
 
 function drawPlay(): void {
@@ -1057,14 +1046,18 @@ function drawPlay(): void {
   // Floating points
   for (const p of floaters) txt(p.text, p.x, p.y, "#ffd23f", 8, "center");
 
-  // The line to the fish: green when it's close, red when it's about to get away
-  if (bob.state === "fight" && bob.fish) {
-    const f = bob.fish;
-    ctx.strokeStyle = bob.dist < 40 ? "#7dff7d" : bob.dist < 80 ? "#ffd23f" : "#ff5c5c";
+  // Pump ring: shrinks onto the bobber, click when it lines up
+  if (bob.state === "fight") {
+    const r = Math.max(4, 4 + 14 * (1 - bob.beatT / PUMP_AT));
+    const inWindow = Math.abs(bob.beatT - PUMP_AT) <= PUMP_WIN;
+    ctx.strokeStyle = inWindow ? "#7dff7d" : "#ffffff";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(bob.x, bob.y);
-    ctx.lineTo(f.x, f.y);
+    ctx.arc(bob.x, bob.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "#ffd23f";
+    ctx.beginPath();
+    ctx.arc(bob.x, bob.y, 4, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -1112,7 +1105,7 @@ function drawHud(): void {
   const hint =
     bob.state === "idle" ? "CLICK + HOLD TO CAST" :
     bob.state === "bite" ? "CLICK THE RING!" :
-    bob.state === "fight" ? "HOLD TO REEL IN, LET GO TO RUN" : "";
+    bob.state === "fight" ? "CLICK WHEN THE RING HITS THE BOBBER" : "";
   txt(hint, 6, 174, "#ffffff", 8);
 
   if (banner.t > 0) {
